@@ -99,9 +99,7 @@ def test_parse_pdf_basic_processing(sample_pdf_path):
         assert isinstance(segment.id, str), (
             f"Segment {i} id attribute is not a string: {segment.id}"
         )
-        assert len(segment.id) > 0, (
-            f"Segment {i} id attribute should not be empty"
-        )
+        assert len(segment.id) > 0, f"Segment {i} id attribute should not be empty"
 
 
 def test_parse_pdf_non_existent_file():

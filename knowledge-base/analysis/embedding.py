@@ -67,7 +67,9 @@ class EmbeddingClient:
                     for segment in batch_segments
                 ]
                 embedding_vectors = await asyncio.gather(*tasks)
-                for segment, embedding_vector in zip(batch_segments, embedding_vectors, strict=False):
+                for segment, embedding_vector in zip(
+                    batch_segments, embedding_vectors, strict=False
+                ):
                     if embedding_vector is not None:
                         segment.embedding = np.array(embedding_vector)
             yield doc  # Yield the processed document

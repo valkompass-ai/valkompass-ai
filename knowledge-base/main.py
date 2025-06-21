@@ -10,8 +10,7 @@ from tqdm.asyncio import tqdm as async_tqdm
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,10 @@ def process_party_entities(schema_manager: SchemaManager) -> None:
     logger.info("Processing party entities...")
 
     # Load parties from JSON file
-    parties_path = Path("knowledge-base/documents/voting/parties.json")
+    parties_path = Path("documents/voting/parties.json")
     if not parties_path.exists():
         logger.error(f"Parties file not found at {parties_path}")
-        return
+        raise FileNotFoundError(f"Parties file not found at {parties_path}")
 
     with open(parties_path, encoding="utf-8") as f:
         parties_data = json.load(f)
@@ -59,10 +58,7 @@ def process_party_entities(schema_manager: SchemaManager) -> None:
     parties = []
     for abbr, full_name in parties_data["parties"].items():
         if abbr != "-":  # Skip "Partilös" (independent)
-            parties.append(Party(
-                abbreviation=abbr,
-                full_name=full_name
-            ))
+            parties.append(Party(abbreviation=abbr, full_name=full_name))
 
     # Import to Neo4j
     schema_manager.upsert_parties(parties)
@@ -280,9 +276,6 @@ async def main():
         schema_manager.apply_schema()
         print("Schema applied successfully.")
 
-        # Process party entities
-        process_party_entities(schema_manager)
-
         print("Upserting topics...")
         for topic in tqdm(topics, desc="Upserting topics", unit="topic"):
             schema_manager.upsert_topic(topic)
@@ -292,6 +285,11 @@ async def main():
         for doc in tqdm(documents, desc="Upserting documents", unit="doc"):
             schema_manager.upsert_document(doc)
         print("Documents upserted successfully.")
+
+        # Process party entities
+        print("Processing party entities...")
+        process_party_entities(schema_manager)
+        print("Party entities processed successfully.")
 
     if "graph-clear" in args.actions:
         schema_manager = SchemaManager(

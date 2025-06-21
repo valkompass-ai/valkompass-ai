@@ -201,12 +201,14 @@ class SchemaManager:
                 SET p.full_name = $full_name
                 """,
                 abbreviation=party.abbreviation,
-                full_name=party.full_name
+                full_name=party.full_name,
             )
 
     def upsert_parties(self, parties: list[Party]) -> None:
         """Bulk insert or update party nodes"""
-        parties_data = [{"abbreviation": p.abbreviation, "full_name": p.full_name} for p in parties]
+        parties_data = [
+            {"abbreviation": p.abbreviation, "full_name": p.full_name} for p in parties
+        ]
         with self.driver.session() as session:
             session.run(
                 """
@@ -214,7 +216,7 @@ class SchemaManager:
                 MERGE (p:Party {abbreviation: party.abbreviation})
                 SET p.full_name = party.full_name
                 """,
-                parties=parties_data
+                parties=parties_data,
             )
 
     def link_documents_to_parties(self) -> None:
@@ -233,11 +235,14 @@ class SchemaManager:
             "socialdemokraterna": "S",
             "sverigedemokraterna": "SD",
             "vansterpartiet": "V",
-            "kristdemokraterna": "KD"
+            "kristdemokraterna": "KD",
         }
 
         with self.driver.session() as session:
             for folder_name, party_abbr in folder_to_party_mapping.items():
+                print(
+                    f"Linking documents to party {party_abbr} from folder {folder_name}"
+                )
                 session.run(
                     """
                     MATCH (d:Document)
@@ -246,7 +251,7 @@ class SchemaManager:
                     MERGE (p)-[:AUTHORED]->(d)
                     """,
                     folder_pattern=f"/documents/{folder_name}/",
-                    party_abbr=party_abbr
+                    party_abbr=party_abbr,
                 )
 
 
