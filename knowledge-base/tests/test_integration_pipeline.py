@@ -19,6 +19,7 @@ import pytest
 from analysis.embedding import EmbeddingClient
 from analysis.topic_modeling import extract_topics, topics_to_pydantic
 from graph import SchemaManager
+from main import process_party_entities
 from model import Document, DocumentSegment, Topic
 from parser import parse_document
 from util.errors import NoSuchDocumentError
@@ -422,3 +423,171 @@ class TestIntegrationPipeline:
 
         result = asyncio.run(test_empty_embedding())
         assert result == []
+
+
+class TestPartyIntegrationPipeline:
+    """Integration tests for party processing in the knowledge base pipeline."""
+
+    @pytest.fixture
+    def mock_parties_json_file(self):
+        """Create a temporary parties.json file for integration testing."""
+        parties_data = {
+            "description": "Test Swedish political parties",
+            "extractedAt": "2025-01-01T00:00:00.000Z",
+            "totalParties": 3,
+            "source": "Integration test data",
+            "parties": {
+                "C": "Centerpartiet",
+                "M": "Moderaterna",
+                "S": "Socialdemokraterna",
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(parties_data, f)
+            return Path(f.name)
+
+    @pytest.fixture
+    def mock_schema_manager_for_parties(self):
+        """Create a mock SchemaManager specifically for party testing."""
+        mock_manager = MagicMock(spec=SchemaManager)
+        mock_manager.upsert_parties = MagicMock()
+        mock_manager.link_documents_to_parties = MagicMock()
+        return mock_manager
+
+    def test_party_processing_integration_success(
+        self, mock_schema_manager_for_parties, mock_parties_json_file
+    ):
+        """Test complete party processing integration workflow."""
+        # Read the actual JSON data from the temp file
+        with open(mock_parties_json_file) as f:
+            parties_data = json.load(f)
+
+        with patch("main.Path") as mock_path_class:
+            # Mock the parties.json path to point to our test file
+            mock_parties_path = MagicMock()
+            mock_parties_path.exists.return_value = True
+            mock_path_class.return_value = mock_parties_path
+
+            # Mock json.load to return our test data
+            with patch("json.load", return_value=parties_data):
+                with patch("builtins.open", mock=MagicMock()):
+                    # Execute the party processing
+                    process_party_entities(mock_schema_manager_for_parties)
+
+            # Verify the complete workflow
+            mock_schema_manager_for_parties.upsert_parties.assert_called_once()
+            mock_schema_manager_for_parties.link_documents_to_parties.assert_called_once()
+
+            # Verify correct parties were processed
+            called_parties = mock_schema_manager_for_parties.upsert_parties.call_args[
+                0
+            ][0]
+            assert len(called_parties) == 3
+
+            party_names = {p.abbreviation: p.full_name for p in called_parties}
+            assert party_names["C"] == "Centerpartiet"
+            assert party_names["M"] == "Moderaterna"
+            assert party_names["S"] == "Socialdemokraterna"
+
+    def test_party_processing_with_documents_integration(
+        self, sample_documents, mock_schema_manager_for_parties
+    ):
+        """Test integration of party processing with document processing."""
+        # Mock the parties data
+        parties_data = {"parties": {"C": "Centerpartiet", "M": "Moderaterna"}}
+
+        with patch("main.Path") as mock_path_class:
+            mock_parties_path = MagicMock()
+            mock_parties_path.exists.return_value = True
+            mock_path_class.return_value = mock_parties_path
+
+            with patch("json.load", return_value=parties_data):
+                with patch("builtins.open", mock=MagicMock()):
+                    process_party_entities(mock_schema_manager_for_parties)
+
+        # Verify both parties and document linking were processed
+        mock_schema_manager_for_parties.upsert_parties.assert_called_once()
+        mock_schema_manager_for_parties.link_documents_to_parties.assert_called_once()
+
+        # Verify the parties were created correctly
+        called_parties = mock_schema_manager_for_parties.upsert_parties.call_args[0][0]
+        assert len(called_parties) == 2
+        assert any(
+            p.abbreviation == "C" and p.full_name == "Centerpartiet"
+            for p in called_parties
+        )
+        assert any(
+            p.abbreviation == "M" and p.full_name == "Moderaterna"
+            for p in called_parties
+        )
+
+    def test_party_processing_error_handling_integration(
+        self, mock_schema_manager_for_parties
+    ):
+        """Test error handling in party processing integration."""
+        # Test with missing parties.json file
+        with patch("main.Path") as mock_path_class:
+            mock_parties_path = MagicMock()
+            mock_parties_path.exists.return_value = False
+            mock_path_class.return_value = mock_parties_path
+
+            # Should raise FileNotFoundError
+            with pytest.raises(FileNotFoundError):
+                process_party_entities(mock_schema_manager_for_parties)
+
+            # No database operations should occur
+            mock_schema_manager_for_parties.upsert_parties.assert_not_called()
+            mock_schema_manager_for_parties.link_documents_to_parties.assert_not_called()
+
+    def test_full_pipeline_with_parties_integration(
+        self, sample_documents, mock_schema_manager_for_parties
+    ):
+        """Test party processing as part of the complete pipeline workflow."""
+        # Simulate the full pipeline: documents → embeddings → topics → graph (including parties)
+
+        # Mock embeddings for documents - just need to mock the client
+        mock_embedding_client = AsyncMock(spec=EmbeddingClient)
+
+        # Mock topic modeling
+        mock_topics = [
+            Topic(
+                id=0,
+                name="Environmental Policy",
+                description="Topics related to environment and sustainability",
+            ),
+            Topic(
+                id=1,
+                name="Economic Policy",
+                description="Topics related to economics and business",
+            ),
+        ]
+
+        # Mock parties data
+        parties_data = {"parties": {"C": "Centerpartiet", "S": "Socialdemokraterna"}}
+
+        with patch(
+            "analysis.embedding.EmbeddingClient", return_value=mock_embedding_client
+        ):
+            with patch("analysis.topic_modeling.extract_topics", return_value=([], [])):
+                with patch(
+                    "analysis.topic_modeling.topics_to_pydantic",
+                    return_value=mock_topics,
+                ):
+                    with patch("main.Path") as mock_path_class:
+                        mock_parties_path = MagicMock()
+                        mock_parties_path.exists.return_value = True
+                        mock_path_class.return_value = mock_parties_path
+
+                        with patch("json.load", return_value=parties_data):
+                            with patch("builtins.open", mock=MagicMock()):
+                                # This would be called as part of the main pipeline
+                                process_party_entities(mock_schema_manager_for_parties)
+
+        # Verify party processing completed successfully
+        mock_schema_manager_for_parties.upsert_parties.assert_called_once()
+        mock_schema_manager_for_parties.link_documents_to_parties.assert_called_once()
+
+        # Verify correct number of parties processed
+        called_parties = mock_schema_manager_for_parties.upsert_parties.call_args[0][0]
+        assert len(called_parties) == 2

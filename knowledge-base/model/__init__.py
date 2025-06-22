@@ -3,6 +3,8 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, field_serializer, field_validator, model_validator
 
+from .political_entities import Party as Party
+
 
 class Topic(BaseModel):
     id: int
@@ -41,11 +43,13 @@ class DocumentSegment(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    @model_validator(mode='after')
-    def validate_indices(self) -> 'DocumentSegment':
+    @model_validator(mode="after")
+    def validate_indices(self) -> "DocumentSegment":
         """Validate that start_index < end_index and page > 0."""
         if self.start_index >= self.end_index:
-            raise ValueError(f"start_index ({self.start_index}) must be less than end_index ({self.end_index})")
+            raise ValueError(
+                f"start_index ({self.start_index}) must be less than end_index ({self.end_index})"
+            )
         if self.page <= 0:
             raise ValueError(f"page ({self.page}) must be positive")
         if not self.text.strip():

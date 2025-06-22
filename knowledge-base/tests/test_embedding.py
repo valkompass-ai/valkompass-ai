@@ -84,7 +84,7 @@ async def test_get_embedding_success(embedding_client: EmbeddingClient):
         mock_client.embeddings.create = AsyncMock()
         mock_client.embeddings.create.side_effect = [
             AsyncMock(data=[AsyncMock(embedding=mock_embedding_1)]),
-            AsyncMock(data=[AsyncMock(embedding=mock_embedding_2)])
+            AsyncMock(data=[AsyncMock(embedding=mock_embedding_2)]),
         ]
 
         updated_documents_generator = embedding_client.embed_documents(documents)

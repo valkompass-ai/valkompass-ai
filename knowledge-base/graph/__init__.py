@@ -2,7 +2,7 @@ import json
 
 from neo4j import GraphDatabase
 
-from model import Document, Topic
+from model import Document, Party, Topic
 
 # 1) Define your schema in Python
 SCHEMA = {
@@ -20,6 +20,10 @@ SCHEMA = {
             "name": "segment_id_unique",
             "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:DocumentSegment) REQUIRE n.id IS UNIQUE",
         },
+        {
+            "name": "party_abbreviation_unique",
+            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Party) REQUIRE n.abbreviation IS UNIQUE",
+        },
     ],
     "indexes": [
         # basic look-ups
@@ -30,6 +34,10 @@ SCHEMA = {
         {
             "name": "doc_path_idx",
             "cypher": "INDEX doc_path_idx IF NOT EXISTS FOR (n:Document) ON (n.path)",
+        },
+        {
+            "name": "party_full_name_idx",
+            "cypher": "INDEX party_full_name_idx IF NOT EXISTS FOR (n:Party) ON (n.full_name)",
         },
         # vector indexes for fast embedding search (requires Neo4j vector plugin)
         {
@@ -182,6 +190,68 @@ class SchemaManager:
                     MERGE (s)-[:MENTIONS]->(t)
                     """,
                     topic_mentions_data=topic_mentions_data,
+                )
+
+    def upsert_party(self, party: Party) -> None:
+        """Insert or update a party node"""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MERGE (p:Party {abbreviation: $abbreviation})
+                SET p.full_name = $full_name
+                """,
+                abbreviation=party.abbreviation,
+                full_name=party.full_name,
+            )
+
+    def upsert_parties(self, parties: list[Party]) -> None:
+        """Bulk insert or update party nodes"""
+        parties_data = [
+            {"abbreviation": p.abbreviation, "full_name": p.full_name} for p in parties
+        ]
+        with self.driver.session() as session:
+            session.run(
+                """
+                UNWIND $parties AS party
+                MERGE (p:Party {abbreviation: party.abbreviation})
+                SET p.full_name = party.full_name
+                """,
+                parties=parties_data,
+            )
+
+    def link_documents_to_parties(self) -> None:
+        """
+        Create AUTHORED relationships based on file paths.
+        Documents are organized as: knowledge-base/documents/{party_name}/
+
+        This method uses a mapping approach since folder names don't always match party names exactly.
+        """
+        # Direct folder-to-party mapping
+        folder_to_party_mapping = {
+            "centerpartiet": "C",
+            "liberalerna": "L",
+            "miljopartiet": "MP",
+            "moderaterna": "M",
+            "socialdemokraterna": "S",
+            "sverigedemokraterna": "SD",
+            "vansterpartiet": "V",
+            "kristdemokraterna": "KD",
+        }
+
+        with self.driver.session() as session:
+            for folder_name, party_abbr in folder_to_party_mapping.items():
+                print(
+                    f"Linking documents to party {party_abbr} from folder {folder_name}"
+                )
+                session.run(
+                    """
+                    MATCH (d:Document)
+                    WHERE d.path CONTAINS $folder_pattern
+                    MATCH (p:Party {abbreviation: $party_abbr})
+                    MERGE (p)-[:AUTHORED]->(d)
+                    """,
+                    folder_pattern=f"/documents/{folder_name}/",
+                    party_abbr=party_abbr,
                 )
 
 

@@ -10,15 +10,16 @@ from tqdm.asyncio import tqdm as async_tqdm
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+import json
 
 from analysis.embedding import EmbeddingClient
 from analysis.topic_modeling import extract_topics, topics_to_pydantic
 from graph import SchemaManager
-from model import Document, DocumentSegment, Topic
+from model import Document, DocumentSegment, Party, Topic
 from model.store import (
     load_documents_from_json,
     load_topics_from_json,
@@ -38,6 +39,34 @@ STRUCTURED_KB_OUTPUT_DIR = Path(__file__).parent / "structured-knowledge-base"
 STRUCTURED_DOCS_OUTPUT_DIR = (
     Path(__file__).parent / "structured-knowledge-base" / "documents"
 )
+
+
+def process_party_entities(schema_manager: SchemaManager) -> None:
+    """Create party nodes and link them to documents"""
+    logger.info("Processing party entities...")
+
+    # Load parties from JSON file
+    parties_path = Path("documents/voting/parties.json")
+    if not parties_path.exists():
+        logger.error(f"Parties file not found at {parties_path}")
+        raise FileNotFoundError(f"Parties file not found at {parties_path}")
+
+    with open(parties_path, encoding="utf-8") as f:
+        parties_data = json.load(f)
+
+    # Create Party objects
+    parties = []
+    for abbr, full_name in parties_data["parties"].items():
+        if abbr != "-":  # Skip "Partilös" (independent)
+            parties.append(Party(abbreviation=abbr, full_name=full_name))
+
+    # Import to Neo4j
+    schema_manager.upsert_parties(parties)
+    logger.info(f"Created {len(parties)} party nodes")
+
+    # Create relationships between parties and documents
+    schema_manager.link_documents_to_parties()
+    logger.info("Linked parties to their authored documents")
 
 
 def load_and_parse_documents(
@@ -256,6 +285,11 @@ async def main():
         for doc in tqdm(documents, desc="Upserting documents", unit="doc"):
             schema_manager.upsert_document(doc)
         print("Documents upserted successfully.")
+
+        # Process party entities
+        print("Processing party entities...")
+        process_party_entities(schema_manager)
+        print("Party entities processed successfully.")
 
     if "graph-clear" in args.actions:
         schema_manager = SchemaManager(
