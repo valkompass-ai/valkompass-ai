@@ -1,7 +1,10 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from model import DocumentSegment
-import pdfplumber
 import os
+
+import pdfplumber
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from model import DocumentSegment
+from util.errors import NoSuchDocumentError
 
 
 def parse_pdf(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]:
@@ -15,22 +18,22 @@ def __parse_and_segment_langchain(
     chunk_size: int = 2000,
     chunk_overlap: int = 200,
 ) -> tuple[str, list[DocumentSegment]]:
+    # Check if file exists first
+    if not os.path.exists(path):
+        raise NoSuchDocumentError(f"PDF file not found: {path}")
+
     # 1) Extract text page by page and prepare for full raw text concatenation
     page_data_list = []  # Stores dicts of {"text": str, "page_number": int}
-    try:
-        with pdfplumber.open(path) as pdf:
-            if not pdf.pages:
-                return "", []  # Handle PDF with no pages
-            for page in pdf.pages:
-                page_data_list.append(
-                    {"text": page.extract_text() or "", "page_number": page.page_number}
-                )
-    except Exception as e:
-        print(f"Error opening or processing PDF {path}: {e}")
-        return "", []
+    with pdfplumber.open(path) as pdf:
+        if not pdf.pages:
+            raise ValueError(f"PDF file has no pages: {path}")
+        for page in pdf.pages:
+            page_data_list.append(
+                {"text": page.extract_text() or "", "page_number": page.page_number}
+            )
 
     if not page_data_list:
-        return "", []
+        raise ValueError(f"No pages could be extracted from PDF: {path}")
 
     # 2) Construct the full raw text and track character offsets for each page start
     raw_parts = []

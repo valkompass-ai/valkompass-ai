@@ -26,7 +26,17 @@ dependencies = [
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=1.0.0",
+    "ruff>=0.11.13",
 ]
 
 [tool.setuptools]
 packages = ["analysis", "documents", "graph", "model", "parser", "util", "tests"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

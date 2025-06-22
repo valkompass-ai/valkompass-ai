@@ -1,27 +1,34 @@
-from dotenv import load_dotenv
-
-import os
-from pathlib import Path
-from typing import List
 import argparse
 import asyncio
+import logging
+import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
-from graph import SchemaManager
-from model import Document, DocumentSegment, Topic
-from parser import parse_document
-from util.errors import NoSuchDocumentError
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+import json
+
 from analysis.embedding import EmbeddingClient
 from analysis.topic_modeling import extract_topics, topics_to_pydantic
+from graph import SchemaManager
+from model import Document, DocumentSegment, Party, Topic
 from model.store import (
-    store_documents_as_json,
     load_documents_from_json,
-    store_document_as_json,
-    store_topics_as_json,
     load_topics_from_json,
+    store_document_as_json,
+    store_documents_as_json,
+    store_topics_as_json,
 )
+from parser import parse_document
+from util.errors import NoSuchDocumentError
 
 load_dotenv()
 
@@ -34,10 +41,38 @@ STRUCTURED_DOCS_OUTPUT_DIR = (
 )
 
 
+def process_party_entities(schema_manager: SchemaManager) -> None:
+    """Create party nodes and link them to documents"""
+    logger.info("Processing party entities...")
+
+    # Load parties from JSON file
+    parties_path = Path("documents/voting/parties.json")
+    if not parties_path.exists():
+        logger.error(f"Parties file not found at {parties_path}")
+        raise FileNotFoundError(f"Parties file not found at {parties_path}")
+
+    with open(parties_path, encoding="utf-8") as f:
+        parties_data = json.load(f)
+
+    # Create Party objects
+    parties = []
+    for abbr, full_name in parties_data["parties"].items():
+        if abbr != "-":  # Skip "Partilös" (independent)
+            parties.append(Party(abbreviation=abbr, full_name=full_name))
+
+    # Import to Neo4j
+    schema_manager.upsert_parties(parties)
+    logger.info(f"Created {len(parties)} party nodes")
+
+    # Create relationships between parties and documents
+    schema_manager.link_documents_to_parties()
+    logger.info("Linked parties to their authored documents")
+
+
 def load_and_parse_documents(
     documents_dir_abs: Path = DOCUMENTS_BASE_DIR_ABS,
     project_root: Path = PROJECT_ROOT_DIR,
-) -> List[Document]:
+) -> list[Document]:
     """
     Scans a directory for documents, parses them, and returns a list of Document objects
     with paths relative to the project root.
@@ -52,7 +87,7 @@ def load_and_parse_documents(
     Returns:
         A list of Document objects.
     """
-    doc_paths_abs: List[Path] = []
+    doc_paths_abs: list[Path] = []
     # Recursively find all files in the documents_dir
     # Add more extensions here if needed, e.g., "*.txt", "*.docx"
     supported_extensions = ["*.pdf", "*.json"]
@@ -70,7 +105,7 @@ def load_and_parse_documents(
         )
         return []
 
-    parsed_documents: List[Document] = []
+    parsed_documents: list[Document] = []
     print(f"Found {len(doc_paths_abs)} documents. Starting parsing...")
 
     for i, doc_path_abs in enumerate(
@@ -87,9 +122,11 @@ def load_and_parse_documents(
 
             parsed_documents.append(document_obj)
         except NoSuchDocumentError as e:
-            print(f"Skipping (not found): {doc_path_abs}. Error: {e}")
+            logger.warning(f"Skipping (not found): {doc_path_abs}. Error: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error parsing {doc_path_abs}: {e}")
 
-    print(
+    logger.info(
         f"Successfully parsed {len(parsed_documents)} out of {len(doc_paths_abs)} documents."
     )
     return parsed_documents
@@ -121,8 +158,8 @@ async def main():
 
     args = parser.parse_args()
 
-    documents: List[Document] = []
-    topics: List[Topic] = []
+    documents: list[Document] = []
+    topics: list[Topic] = []
     processed_something = False
 
     # Convert string paths from args to Path objects
@@ -180,7 +217,7 @@ async def main():
                 return
 
         print(f"Starting topic modeling for segments in {len(documents)} documents...")
-        all_segments: List[DocumentSegment] = []
+        all_segments: list[DocumentSegment] = []
         for doc in documents:
             all_segments.extend(doc.segments)
 
@@ -248,6 +285,11 @@ async def main():
         for doc in tqdm(documents, desc="Upserting documents", unit="doc"):
             schema_manager.upsert_document(doc)
         print("Documents upserted successfully.")
+
+        # Process party entities
+        print("Processing party entities...")
+        process_party_entities(schema_manager)
+        print("Party entities processed successfully.")
 
     if "graph-clear" in args.actions:
         schema_manager = SchemaManager(

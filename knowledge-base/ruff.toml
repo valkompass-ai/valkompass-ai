@@ -1,0 +1,56 @@
+# Python version
+target-version = "py313"
+
+# Line length
+line-length = 88
+
+[lint]
+# Enable specific rule sets
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+# Exclude patterns
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[format]
+# Use double quotes for strings
+quote-style = "double"
+
+# Use spaces for indentation
+indent-style = "space"
+
+# Skip formatting for docstrings
+skip-magic-trailing-comma = false
+
+[lint.per-file-ignores]
+# Test files can have longer lines and assert statements
+"tests/*" = ["E501", "B011"]
+# Main file needs to load env vars before importing
+"main.py" = ["E402"]
+
+[lint.isort]
+# Import sorting configuration
+known-first-party = ["analysis", "model", "parser", "graph", "util"]
+force-single-line = false
+combine-as-imports = true

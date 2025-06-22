@@ -1,0 +1,41 @@
+name: Knowledge Base Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        cache-dependency-glob: "knowledge-base/uv.lock"
+
+    - name: Set up Python
+      run: uv python install 3.13
+
+    - name: Install dependencies
+      working-directory: knowledge-base
+      run: uv sync --dev
+
+    - name: Run lint
+      working-directory: knowledge-base
+      run: uv run ruff check .
+
+    - name: Run tests
+      working-directory: knowledge-base
+      run: uv run pytest --verbose

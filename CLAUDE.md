@@ -209,7 +209,24 @@ bunx <command>       # NOT npx <command>
 
 ### Python Development (Knowledge Base)
 - **Package Manager**: Use `uv` for dependency management
-- **Exception Handling**: Let exceptions propagate - avoid broad catches
+- **Exception Handling**: **CRITICAL - NO SILENT FAILURES ALLOWED**
+  - **NEVER** catch exceptions and return `None` or silently fail
+  - **ALWAYS** let exceptions propagate to discover errors early
+  - The knowledge base pipeline must run without errors - silent failures hide bugs
+  - **BAD EXAMPLE** (DO NOT DO THIS):
+    ```python
+    try:
+        response = await self.client.embeddings.create(input=[text], model=model)
+        return response.data[0].embedding
+    except Exception as e:
+        logger.error(f"Failed: {e}")
+        return None  # SILENT FAILURE - NOT ALLOWED
+    ```
+  - **CORRECT EXAMPLE**:
+    ```python
+    response = await self.client.embeddings.create(input=[text], model=model)
+    return response.data[0].embedding  # Let exceptions propagate
+    ```
 - **Testing**: Comprehensive pytest suite with async support
 - **Performance**: Async patterns for I/O operations, batch processing
 

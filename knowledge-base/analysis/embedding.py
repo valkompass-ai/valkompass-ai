@@ -1,8 +1,13 @@
-from openai import AsyncOpenAI
-from typing import List, AsyncGenerator
-import numpy as np
-from model import Document
 import asyncio
+import logging
+from collections.abc import AsyncGenerator
+
+import numpy as np
+from openai import AsyncOpenAI
+
+from model import Document
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingClient:
@@ -24,8 +29,8 @@ class EmbeddingClient:
         return response.data[0].embedding
 
     async def embed_documents(
-        self, documents: List[Document], model: str | None = None
-    ) -> AsyncGenerator[Document, None]:
+        self, documents: list[Document], model: str | None = None
+    ) -> AsyncGenerator[Document]:
         """
         Embeds the text of each segment in a list of Document objects.
         Updates the 'embedding' field of each DocumentSegment.
@@ -34,7 +39,7 @@ class EmbeddingClient:
         """
         model_to_use = model if model else self.model_name
         if not self.client:
-            print("OpenAI client not initialized. Cannot embed documents.")
+            logger.error("OpenAI client not initialized. Cannot embed documents.")
             # Yield documents as they are if client not initialized
             for doc in documents:
                 yield doc
@@ -62,7 +67,9 @@ class EmbeddingClient:
                     for segment in batch_segments
                 ]
                 embedding_vectors = await asyncio.gather(*tasks)
-                for segment, embedding_vector in zip(batch_segments, embedding_vectors):
+                for segment, embedding_vector in zip(
+                    batch_segments, embedding_vectors, strict=False
+                ):
                     if embedding_vector is not None:
                         segment.embedding = np.array(embedding_vector)
             yield doc  # Yield the processed document

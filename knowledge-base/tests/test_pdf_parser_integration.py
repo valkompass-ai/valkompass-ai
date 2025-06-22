@@ -1,10 +1,12 @@
+import os
+
 import pytest
+
+from model import DocumentSegment  # Assuming model is accessible
 from parser.pdf_parser import (
     parse_pdf,
 )  # Assuming test is run from root or PYTHONPATH is set
-from model import DocumentSegment  # Assuming model is accessible
 from util.errors import NoSuchDocumentError
-import os
 
 # Test PDF file path (relative to the knowledge-base directory or project root)
 # Adjust the path if your test execution context is different.
@@ -23,7 +25,8 @@ def sample_pdf_path():
 
 def test_parse_pdf_basic_processing(sample_pdf_path):
     """Test basic PDF parsing, raw content, and segment generation."""
-    raw_content, segments = parse_pdf(sample_pdf_path)
+    document_id = "test-socialdemokraterna-valmanifest"
+    raw_content, segments = parse_pdf(sample_pdf_path, document_id)
 
     assert raw_content is not None, "Raw content should not be None."
     assert isinstance(raw_content, str), "Raw content should be a string."
@@ -76,33 +79,34 @@ def test_parse_pdf_basic_processing(sample_pdf_path):
             f"Indices: [{segment.start_index}:{segment.end_index}]"
         )
 
-        assert isinstance(segment.metadata, dict), (
-            f"Segment {i} metadata should be a dict."
-        )
-        assert "avg_font_size" in segment.metadata, (
-            f"Segment {i} metadata missing 'avg_font_size'."
-        )
-        # Font size can be 0 if no words with size were found in a segment, though unlikely for real text.
-        assert isinstance(segment.metadata["avg_font_size"], float) or isinstance(
-            segment.metadata["avg_font_size"], int
-        ), (
-            f"Segment {i} avg_font_size not a number: {segment.metadata['avg_font_size']}"
-        )
+        # Metadata is optional and might be None
+        if segment.metadata is not None:
+            assert isinstance(segment.metadata, dict), (
+                f"Segment {i} metadata should be a dict when present."
+            )
 
-        # Test the new page field
+        # Test the page field
         assert hasattr(segment, "page"), f"Segment {i} missing 'page' attribute."
         assert isinstance(segment.page, int), (
             f"Segment {i} page attribute is not an int: {segment.page}"
         )
-        assert segment.page >= 0, (
-            f"Segment {i} page attribute is negative: {segment.page}"
+        assert segment.page > 0, (
+            f"Segment {i} page attribute should be positive: {segment.page}"
         )
+
+        # Test that segment has required id field
+        assert hasattr(segment, "id"), f"Segment {i} missing 'id' attribute."
+        assert isinstance(segment.id, str), (
+            f"Segment {i} id attribute is not a string: {segment.id}"
+        )
+        assert len(segment.id) > 0, f"Segment {i} id attribute should not be empty"
 
 
 def test_parse_pdf_non_existent_file():
     """Test that parsing a non-existent PDF raises NoSuchDocumentError."""
+    document_id = "test-non-existent"
     with pytest.raises(NoSuchDocumentError):
-        parse_pdf(NON_EXISTENT_PDF_PATH)
+        parse_pdf(NON_EXISTENT_PDF_PATH, document_id)
 
 
 # To run these tests from the project root:

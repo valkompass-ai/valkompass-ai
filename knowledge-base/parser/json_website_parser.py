@@ -1,6 +1,10 @@
 import json
+import logging
+
 from model import DocumentSegment
 from util.errors import NoSuchDocumentError
+
+logger = logging.getLogger(__name__)
 
 
 def parse_json(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]:
@@ -11,18 +15,15 @@ def parse_json(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]
     The 'content' becomes the text of a DocumentSegment, and 'url' is stored in metadata.
     """
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        raise NoSuchDocumentError(f"File not found: {path}")
-    except json.JSONDecodeError:
-        # Or a more specific error, or allow it to propagate if that's preferred by project standards
-        print(f"Error decoding JSON from file: {path}")
-        return "", []
+        raise NoSuchDocumentError(f"File not found: {path}") from None
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Error decoding JSON from file: {path} - {e}") from e
 
     if not isinstance(data, list):
-        print(f"JSON data in {path} is not a list as expected.")
-        return "", []
+        raise ValueError(f"JSON data in {path} is not a list as expected.")
 
     raw_parts = []
     segments: list[DocumentSegment] = []
@@ -30,7 +31,7 @@ def parse_json(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]
 
     for i, item in enumerate(data):
         if not isinstance(item, dict) or "content" not in item or "url" not in item:
-            print(f"Skipping invalid item at index {i} in {path}: {item}")
+            logger.warning(f"Skipping invalid item at index {i} in {path}: {item}")
             continue
 
         content = item.get("content", "")

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List
+
 from tqdm import tqdm
 
 from . import (
@@ -9,7 +9,7 @@ from . import (
 )  # Assuming Document and Topic are in __init__.py in the same package
 
 
-def store_documents_as_json(documents: List[Document], output_dir: Path):
+def store_documents_as_json(documents: list[Document], output_dir: Path):
     """
     Serializes a list of Document objects to pretty-printed JSON files.
     Each document's path attribute is assumed to be relative to the project root.
@@ -59,7 +59,7 @@ def store_document_as_json(document: Document, output_dir: Path):
         f.write(json_string)
 
 
-def load_documents_from_json(input_dir: Path) -> List[Document]:
+def load_documents_from_json(input_dir: Path) -> list[Document]:
     """
     Loads Document objects from JSON files in a specified directory.
 
@@ -74,11 +74,11 @@ def load_documents_from_json(input_dir: Path) -> List[Document]:
         print(f"No JSON files found in {input_dir}.")
         return []
 
-    loaded_documents: List[Document] = []
+    loaded_documents: list[Document] = []
     print(f"Loading {len(json_files)} documents from JSON in {input_dir}...")
 
     for json_file_path in tqdm(json_files, desc="Loading JSON documents", unit="doc"):
-        with open(json_file_path, "r", encoding="utf-8") as f:
+        with open(json_file_path, encoding="utf-8") as f:
             data = json.load(f)
             # Pydantic will attempt to convert list back to np.ndarray for 'embedding'
             # if DocumentSegment's embedding field is type-hinted as np.ndarray
@@ -90,7 +90,7 @@ def load_documents_from_json(input_dir: Path) -> List[Document]:
 
 
 def store_topics_as_json(
-    topics: List[Topic], output_dir: Path, filename: str = "topics.json"
+    topics: list[Topic], output_dir: Path, filename: str = "topics.json"
 ):
     """
     Serializes a list of Topic objects to a single JSON file.
@@ -116,7 +116,7 @@ def store_topics_as_json(
 
 def load_topics_from_json(
     input_dir: Path, filename: str = "topics.json"
-) -> List[Topic]:
+) -> list[Topic]:
     """
     Loads Topic objects from a JSON file in a specified directory.
 
@@ -132,10 +132,10 @@ def load_topics_from_json(
         print(f"Topics file not found: {input_filepath}")
         return []
 
-    loaded_topics: List[Topic] = []
+    loaded_topics: list[Topic] = []
     print(f"Loading topics from {input_filepath}...")
 
-    with open(input_filepath, "r", encoding="utf-8") as f:
+    with open(input_filepath, encoding="utf-8") as f:
         topics_data = json.load(f)
         for topic_data in tqdm(topics_data, desc="Loading JSON topics", unit="topic"):
             # Pydantic will use field_validator for 'embedding' to convert list to np.ndarray

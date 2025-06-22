@@ -1,10 +1,10 @@
 import nltk
-from nltk.corpus import stopwords
-from bertopic import BERTopic
-from sklearn.feature_extraction.text import CountVectorizer
 import numpy as np
 import spacy
-from langdetect import detect, LangDetectException
+from bertopic import BERTopic
+from langdetect import LangDetectException, detect
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import CountVectorizer
 
 from model import DocumentSegment, Topic
 
@@ -129,7 +129,7 @@ def extract_topics(
 
     # Create a map from segment ID to topic ID
     segment_id_to_topic_id_map: dict[str, int] = {}
-    for segment, topic_id in zip(valid_segments, topic_assignments):
+    for segment, topic_id in zip(valid_segments, topic_assignments, strict=False):
         if (
             segment.id is None
         ):  # Should ideally not happen if DocumentSegment.id is always set

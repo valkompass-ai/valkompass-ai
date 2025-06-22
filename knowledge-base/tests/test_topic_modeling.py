@@ -1,10 +1,10 @@
 import pytest
 
+from analysis.embedding import EmbeddingClient
+from analysis.topic_modeling import BERTopic, extract_topics
 from model import (
     DocumentSegment,
 )
-from analysis.topic_modeling import extract_topics, BERTopic
-from analysis.embedding import EmbeddingClient
 
 
 async def get_sample_documents() -> list[DocumentSegment]:
@@ -16,17 +16,17 @@ async def get_sample_documents() -> list[DocumentSegment]:
             text="This is about cats and dogs.",
             start_index=0,
             end_index=28,
-            page=0,
+            page=1,
         ),
         DocumentSegment(
             id="seg2",
             text="The best pets are cats, not dogs.",
             start_index=29,
             end_index=63,
-            page=0,
+            page=1,
         ),
         DocumentSegment(
-            id="seg3", text="I love my pet cat.", start_index=64, end_index=81, page=0
+            id="seg3", text="I love my pet cat.", start_index=64, end_index=81, page=1
         ),
         DocumentSegment(
             id="seg4",
@@ -80,21 +80,21 @@ async def segments_one_topic() -> list[DocumentSegment]:
             text="Topic modeling is fun.",
             start_index=0,
             end_index=24,
-            page=0,
+            page=1,
         ),
         DocumentSegment(
             id="topic_seg2",
             text="Fun topic modeling helps analyze text.",
             start_index=25,
             end_index=63,
-            page=0,
+            page=1,
         ),
         DocumentSegment(
             id="topic_seg3",
             text="Analyzing text with topic models is useful.",
             start_index=64,
             end_index=109,
-            page=0,
+            page=1,
         ),
     ]
     for seg in segments:  # Ensure embeddings for these segments too

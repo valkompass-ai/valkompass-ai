@@ -1,11 +1,17 @@
-from model import Document
-from .pdf_parser import parse_pdf
-from .json_website_parser import parse_json
-from util.errors import NoSuchDocumentError
 import os
+
+from model import Document
+from util.errors import NoSuchDocumentError
+
+from .json_website_parser import parse_json
+from .pdf_parser import parse_pdf
 
 
 def parse_document(path: str, document_id: str) -> Document:
+    # Check if file exists first
+    if not os.path.exists(path):
+        raise NoSuchDocumentError(f"File not found: {path}")
+
     raw_content: str = ""
     segments: list = []
 

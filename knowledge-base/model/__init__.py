@@ -1,6 +1,9 @@
-from pydantic import BaseModel, field_serializer, field_validator
-import numpy as np
 from typing import Any
+
+import numpy as np
+from pydantic import BaseModel, field_serializer, field_validator, model_validator
+
+from .political_entities import Party as Party
 
 
 class Topic(BaseModel):
@@ -39,6 +42,19 @@ class DocumentSegment(BaseModel):
     public_url: str | None = None
 
     model_config = {"arbitrary_types_allowed": True}
+
+    @model_validator(mode="after")
+    def validate_indices(self) -> "DocumentSegment":
+        """Validate that start_index < end_index and page > 0."""
+        if self.start_index >= self.end_index:
+            raise ValueError(
+                f"start_index ({self.start_index}) must be less than end_index ({self.end_index})"
+            )
+        if self.page <= 0:
+            raise ValueError(f"page ({self.page}) must be positive")
+        if not self.text.strip():
+            raise ValueError("text cannot be empty or whitespace only")
+        return self
 
     @field_serializer("embedding", when_used="json")
     def serialize_embedding_to_list(self, v: np.ndarray) -> list[float]:
