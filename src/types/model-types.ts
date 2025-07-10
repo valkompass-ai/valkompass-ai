@@ -77,6 +77,26 @@ export const LLM_MODELS: Record<string, LLMModelConfig> = {
       lastUpdated: '2024-12-30',
       sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
     }
+  },
+  'gemini-2.5-flash-lite-preview-06-17': {
+    name: 'Google Gemini 2.5 Flash Lite',
+    provider: 'google',
+    model: 'gemini-2.5-flash-lite-preview-06-17',
+    contextWindow: 1_000_000, // 1M tokens
+    maxOutputTokens: 8192,
+    cost: {
+      inputCostPer1MTokens: {
+        standard: 0.01, // $0.01 per 1M tokens for prompts <= 128k
+        longContext: 0.01  // $0.01 per 1M tokens for prompts > 128k
+      },
+      outputCostPer1MTokens: {
+        standard: 0.04, // $0.04 per 1M tokens for prompts <= 128k
+        longContext: 0.04  // $0.04 per 1M tokens for prompts > 128k
+      },
+      currency: 'USD',
+      lastUpdated: '2024-12-30',
+      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
+    }
   }
 } as const;
 

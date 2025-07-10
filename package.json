@@ -31,6 +31,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "deepmerge-ts": "^7.1.5",
+    "dotenv": "^17.2.0",
     "lucide-react": "^0.511.0",
     "neo4j-driver": "^5.28.1",
     "next": "15.3.2",
