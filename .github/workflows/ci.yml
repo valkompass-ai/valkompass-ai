@@ -12,23 +12,6 @@ jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
-    
-    services:
-      neo4j:
-        image: neo4j:latest
-        env:
-          NEO4J_AUTH: neo4j/test-password
-          NEO4J_PLUGINS: '["graph-data-science"]'
-          NEO4J_dbms_security_procedures_unrestricted: 'gds.*,apoc.*'
-          NEO4J_dbms_security_procedures_allowlist: 'gds.*,apoc.*'
-        ports:
-          - 7687:7687
-          - 7474:7474
-        options: >-
-          --health-cmd "cypher-shell -u neo4j -p test-password 'RETURN 1'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -38,15 +21,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-          cache-dependency-glob: "knowledge-base/uv.lock"
-
-      - name: Set up Python
-        run: uv python install 3.13
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -59,45 +33,24 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install knowledge base dependencies
-        working-directory: ./knowledge-base
-        run: uv sync
-
-      - name: Populate Neo4j graph database
-        working-directory: ./knowledge-base
-        env:
-          NEO4J_URI: bolt://localhost:7687
-          NEO4J_USERNAME: neo4j
-          NEO4J_PASSWORD: test-password
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: uv run python main.py --actions graph
-
       - name: Run linter
         run: bun run lint
 
       - name: Run tests with coverage
-        env:
-          NEO4J_URI: bolt://localhost:7687
-          NEO4J_USERNAME: neo4j
-          NEO4J_PASSWORD: test-password
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY || 'dummy-key' }}
-          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST || 'https://eu.i.posthog.com' }}
-          APP_DOMAIN: http://localhost:3000
-        run: bun run test
+        run: bun run test:ci
 
       - name: Build application
         run: bun run build
         env:
-          NEO4J_URI: bolt://localhost:7687
-          NEO4J_USERNAME: neo4j
-          NEO4J_PASSWORD: test-password
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Provide dummy environment variables for build
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'dummy-key' }}
+          NEO4J_URI: ${{ secrets.NEO4J_URI || 'bolt://localhost:7687' }}
+          NEO4J_USERNAME: ${{ secrets.NEO4J_USERNAME || 'neo4j' }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD || 'dummy-password' }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY || 'dummy-key' }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST || 'https://eu.i.posthog.com' }}
-          APP_DOMAIN: http://localhost:3000
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN || 'http://localhost:3000' }}
 
 
       - name: Upload test results and coverage
