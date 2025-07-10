@@ -1,9 +1,13 @@
 name: Run Knowledge Base Graph Update
 
 on:
+  schedule:
+    # Runs every 2 days at 3am UTC, which is a good approximation for every 48 hours.
+    - cron: '0 3 */2 * *'
   push:
     branches:
       - '**'
+  workflow_dispatch:
 
 jobs:
   update-graph:
