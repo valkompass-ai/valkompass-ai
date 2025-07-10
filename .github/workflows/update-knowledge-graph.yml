@@ -3,7 +3,7 @@ name: Run Knowledge Base Graph Update
 on:
   push:
     branches:
-      - main
+      - '**'
 
 jobs:
   update-graph:
@@ -15,22 +15,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.13' # Assuming Python 3.11, adjust if needed
-
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        shell: bash
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "knowledge-base/uv.lock"
 
-      - name: Create virtual environment
-        run: uv venv
+      - name: Set up Python
+        run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv pip install .
+        run: uv sync
 
       - name: Run graph update
         env:
