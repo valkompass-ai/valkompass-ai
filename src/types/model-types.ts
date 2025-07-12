@@ -83,7 +83,7 @@ export const LLM_MODELS: Record<string, LLMModelConfig> = {
     provider: 'google',
     model: 'gemini-2.5-flash-lite-preview-06-17',
     contextWindow: 1_000_000, // 1M tokens
-    maxOutputTokens: 8192,
+    maxOutputTokens: 64000,
     cost: {
       inputCostPer1MTokens: {
         standard: 0.01, // $0.01 per 1M tokens for prompts <= 128k
