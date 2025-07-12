@@ -95,7 +95,7 @@ export const LLM_MODELS: Record<string, LLMModelConfig> = {
       },
       currency: 'USD',
       lastUpdated: '2024-12-30',
-      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
+      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing#gemini-2.5-flash-lite'
     }
   }
 } as const;
