@@ -1,6 +1,7 @@
 import { getOpenAIEmbedding } from "./openai-service";
 import { getContextFromKB, RetrievedContext, RetrievedSegment } from "./knowledge-base-service";
 import { generateSearchQueries, GeneratedQuery, QueryGenerationResult } from "./query-generation-service";
+import { trackLLMCall } from "./posthog";
 import { Message } from "@/types";
 
 export interface MultiStepAgentConfig {
@@ -38,10 +39,19 @@ const DEFAULT_CONFIG: MultiStepAgentConfig = {
   maxSegmentsPerQuery: 25,
 };
 
+interface QueryModel {
+  generateContent: (prompt: string) => Promise<{
+    response: {
+      text: () => string;
+    };
+  }>;
+}
+
 export const getMultiStepContext = async (
   message: Message,
   distinctId?: string,
-  config: Partial<MultiStepAgentConfig> = {}
+  config: Partial<MultiStepAgentConfig> = {},
+  queryModel?: QueryModel
 ): Promise<MultiStepRetrievalResult> => {
   const overallStartTime = Date.now();
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
@@ -55,11 +65,57 @@ export const getMultiStepContext = async (
       
       // Step 1: Generate multiple search queries
       const queryGenStartTime = Date.now();
-      queryGenerationResult = await generateSearchQueries(message.text, message.id, distinctId);
-      queryGenerationDuration = Date.now() - queryGenStartTime;
-      
-      // Limit the number of queries
-      queries = queryGenerationResult.queries.slice(0, finalConfig.maxQueries);
+      if (queryModel) {
+        // Local query generation using provided model
+        try {
+          const queryGenPrompt = `
+You are a helpful assistant that generates multiple search queries based on a single input query for retrieving relevant political information.
+Generate ${finalConfig.maxQueries} diverse search queries related to: ${message.text}
+For each query, provide a short reasoning why it's useful.
+${finalConfig.enablePartyFiltering ? 'If relevant to Swedish political parties, suggest a party abbreviation filter (like \'S\' for Socialdemokraterna, \'M\' for Moderaterna, etc.). Set to null if not applicable.' : ''}
+Output in STRICT JSON format without any additional text: { "queries": [ { "query": "...", "reasoning": "...", "partyFilter": "S" or null } ] }
+`;
+          const queryGenStart = Date.now();
+          const result = await queryModel.generateContent(queryGenPrompt);
+          const response = await result.response;
+          const generatedText = response.text();
+          const cleanedText = generatedText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+          const parsed = JSON.parse(cleanedText);
+          queries = parsed.queries.slice(0, finalConfig.maxQueries);
+          
+          // Track the call
+          if (distinctId) {
+            const estimatedInputTokens = Math.ceil(queryGenPrompt.length / 4);
+            const estimatedOutputTokens = Math.ceil(generatedText.length / 4);
+            await trackLLMCall(distinctId, 'google', 'gemini-2.5-flash-latest', 'query_generation', {
+              inputTokens: estimatedInputTokens,
+              outputTokens: estimatedOutputTokens,
+              totalTokens: estimatedInputTokens + estimatedOutputTokens,
+              duration: Date.now() - queryGenStart,
+              success: true,
+              messageId: message.id,
+            });
+          }
+          
+          queryGenerationDuration = Date.now() - queryGenStartTime;
+        } catch (error) {
+          console.error('Error in local query generation:', error);
+          // Fallback to single query
+          queries = [{ query: message.text, reasoning: 'Fallback to original query' }];
+          if (distinctId) {
+            await trackLLMCall(distinctId, 'google', 'gemini-2.5-flash-latest', 'query_generation', {
+              success: false,
+              errorMessage: error instanceof Error ? error.message : 'Unknown error',
+              messageId: message.id,
+            });
+          }
+        }
+      } else {
+        // Original call if no queryModel provided
+        queryGenerationResult = await generateSearchQueries(message.text, message.id, distinctId);
+        queryGenerationDuration = Date.now() - queryGenStartTime;
+      }
+
     } else {
       // Fallback to original query
       queries = [{
