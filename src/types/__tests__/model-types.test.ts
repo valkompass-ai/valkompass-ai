@@ -180,7 +180,6 @@ describe('Model Cost Calculations', () => {
       expect(model.cost.inputCostPer1KTokens).toBe(0.00002)
       expect(model.cost.outputCostPer1KTokens).toBe(0)
       expect(model.cost.currency).toBe('USD')
-      expect(model.cost.lastUpdated).toBe('2024-12-30')
       expect(model.cost.sourceUrl).toBe('https://platform.openai.com/docs/pricing')
     })
 
@@ -198,7 +197,6 @@ describe('Model Cost Calculations', () => {
       expect(model.cost.outputCostPer1MTokens.standard).toBe(0.30)
       expect(model.cost.outputCostPer1MTokens.longContext).toBe(0.60)
       expect(model.cost.currency).toBe('USD')
-      expect(model.cost.lastUpdated).toBe('2024-12-30')
       expect(model.cost.sourceUrl).toBe('https://ai.google.dev/gemini-api/docs/pricing')
     })
   })

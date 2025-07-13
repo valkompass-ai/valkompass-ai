@@ -16,7 +16,7 @@ if (!API_KEY) {
 const genAI = new GoogleGenerativeAI(API_KEY);
 
 // Using the model configuration from centralized types
-const LLM_MODEL_KEY: LLMModelKey = 'gemini-2.5-flash';
+const LLM_MODEL_KEY: LLMModelKey = 'gemini-2.5-flash-lite-preview-06-17';
 const LLM_MODEL_QUERY_KEY: LLMModelKey = 'gemini-2.5-flash-lite-preview-06-17';
 const LLM_CONFIG = LLM_MODELS[LLM_MODEL_KEY];
 const LLM_CONFIG_QUERY = LLM_MODELS[LLM_MODEL_QUERY_KEY];
