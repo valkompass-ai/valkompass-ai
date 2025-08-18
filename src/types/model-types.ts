@@ -78,10 +78,10 @@ export const LLM_MODELS: Record<string, LLMModelConfig> = {
       sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
     }
   },
-  'gemini-2.5-flash-lite-preview-06-17': {
+  'gemini-2.5-flash-lite': {
     name: 'Google Gemini 2.5 Flash Lite',
     provider: 'google',
-    model: 'gemini-2.5-flash-lite-preview-06-17',
+    model: 'gemini-2.5-flash-lite',
     contextWindow: 1_000_000, // 1M tokens
     maxOutputTokens: 64000,
     cost: {
