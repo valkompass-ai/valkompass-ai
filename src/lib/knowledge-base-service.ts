@@ -18,7 +18,6 @@ const getDriver = (): Driver => {
       // You might want to verify connectivity here, e.g., by driver.verifyConnectivity()
       // However, verifyConnectivity also checks license for Aura, which might not be desired for local dev.
       // A simple session run can also work if needed.
-      console.log("Neo4j Driver initialized.");
     } catch (error) {
       console.error("Failed to create Neo4j driver:", error);
       throw new Error("Could not establish connection with Neo4j database.");
@@ -34,6 +33,7 @@ export interface RetrievedSegment {
   similarityScore: number;
   publicUrl?: string;
   documentSourceType?: string;
+  partyAbbreviation?: string;
 }
 
 export interface RetrievedContext {
@@ -51,7 +51,7 @@ export interface RetrievedContext {
   }>;
 }
 
-export const  getContextFromKB = async (queryEmbedding: number[], messageId: string, distinctId?: string): Promise<RetrievedContext | null> => {
+export const  getContextFromKB = async (queryEmbedding: number[], messageId: string, distinctId?: string, partyFilter?: string): Promise<RetrievedContext | null> => {
   const session: Session = getDriver().session();
   const overallStartTime = Date.now();
   
@@ -88,16 +88,30 @@ export const  getContextFromKB = async (queryEmbedding: number[], messageId: str
     const topicDescription = topTopic.get('description');
 
     // 2. Find the top 25 similar segments related to this topic and their documents
-    const segmentsResult = await session.run(
-      `CALL db.index.vector.queryNodes('segment_embedding_idx', 25, $queryEmbedding) 
+    let segmentsQuery: string;
+    const queryParams: Record<string, number[] | string> = { queryEmbedding, topicName };
+    
+    if (partyFilter) {
+      // Query with party filter
+      segmentsQuery = `CALL db.index.vector.queryNodes('segment_embedding_idx', 25, $queryEmbedding) 
        YIELD node AS segment, score
        MATCH (doc:Document)-[:CONTAINS]->(segment)
-       // Optional: If you want to ensure segments are related to the found topic, uncomment and adjust:
-       // MATCH (segment)-[:MENTIONS]->(t:Topic {name: $topicName})
-       RETURN doc.path AS documentPath, segment.type AS segmentType, segment.text AS segmentText, segment.page AS segmentPage, segment.public_url AS publicUrl, score AS similarityScore
-       ORDER BY similarityScore DESC`, 
-      { queryEmbedding, topicName } // topicName is used if the optional MATCH above is enabled
-    );
+       MATCH (party:Party)-[:AUTHORED]->(doc)
+       WHERE party.abbreviation = $partyFilter
+       RETURN doc.path AS documentPath, segment.type AS segmentType, segment.text AS segmentText, segment.page AS segmentPage, segment.public_url AS publicUrl, score AS similarityScore, party.abbreviation AS partyAbbreviation
+       ORDER BY similarityScore DESC`;
+      queryParams['partyFilter'] = partyFilter;
+    } else {
+      // Query without party filter (original behavior)
+      segmentsQuery = `CALL db.index.vector.queryNodes('segment_embedding_idx', 25, $queryEmbedding) 
+       YIELD node AS segment, score
+       MATCH (doc:Document)-[:CONTAINS]->(segment)
+       OPTIONAL MATCH (party:Party)-[:AUTHORED]->(doc)
+       RETURN doc.path AS documentPath, segment.type AS segmentType, segment.text AS segmentText, segment.page AS segmentPage, segment.public_url AS publicUrl, score AS similarityScore, party.abbreviation AS partyAbbreviation
+       ORDER BY similarityScore DESC`;
+    }
+    
+    const segmentsResult = await session.run(segmentsQuery, queryParams);
 
     const segments: RetrievedSegment[] = segmentsResult.records.map(record => {
       const rawPublicUrl = record.get('publicUrl');
@@ -107,8 +121,6 @@ export const  getContextFromKB = async (queryEmbedding: number[], messageId: str
 
       if (documentSourceType === 'pdf' && rawPublicUrl && process.env.APP_DOMAIN) {
         finalPublicUrl = `${process.env.APP_DOMAIN}${rawPublicUrl}`;
-      } else if (documentSourceType === 'pdf' && rawPublicUrl) {
-        console.warn("APP_DOMAIN environment variable is not set. PDF publicUrl will be relative.");
       }
 
       return {
@@ -118,6 +130,7 @@ export const  getContextFromKB = async (queryEmbedding: number[], messageId: str
         segmentPage: pageNumber, // Ensure page is a number
         similarityScore: record.get('similarityScore'),
         publicUrl: finalPublicUrl,
+        partyAbbreviation: record.get('partyAbbreviation') || undefined,
       };
     }); 
 
@@ -189,6 +202,5 @@ export const  getContextFromKB = async (queryEmbedding: number[], messageId: str
 export const closeNeo4jDriver = async () => {
   if (driver) {
     await driver.close();
-    console.log("Neo4j Driver closed.");
   }
 }; 

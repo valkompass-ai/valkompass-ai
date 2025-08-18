@@ -50,7 +50,7 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelConfig> = {
       inputCostPer1KTokens: 0.00002, // $0.00002 per 1K tokens
       outputCostPer1KTokens: 0, // No output cost for embeddings
       currency: 'USD',
-      lastUpdated: '2024-12-30',
+      lastUpdated: '2025-07-12',
       sourceUrl: 'https://platform.openai.com/docs/pricing'
     }
   }
@@ -73,8 +73,48 @@ export const LLM_MODELS: Record<string, LLMModelConfig> = {
         standard: 0.30, // $0.30 per 1M tokens for prompts <= 128k
         longContext: 0.60  // $0.60 per 1M tokens for prompts > 128k
       },
+      currency: 'USD',  
+      lastUpdated: '2024-07-07',
+      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
+    }
+  },
+  'gemini-2.5-flash-lite': {
+    name: 'Google Gemini 2.5 Flash Lite',
+    provider: 'google',
+    model: 'gemini-2.5-flash-lite',
+    contextWindow: 1_000_000, // 1M tokens
+    maxOutputTokens: 64000,
+    cost: {
+      inputCostPer1MTokens: {
+        standard: 0.10, // $0.10 per 1M tokens (text/image/video)
+        longContext: 0.10  // Same as no distinction
+      },
+      outputCostPer1MTokens: {
+        standard: 0.40, // $0.40 per 1M tokens
+        longContext: 0.40  // Same as no distinction
+      },
       currency: 'USD',
-      lastUpdated: '2024-12-30',
+      lastUpdated: '2025-07-12',
+      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
+    }
+  },
+  'gemini-2.5-flash': {
+    name: 'Google Gemini 2.5 Flash',
+    provider: 'google',
+    model: 'gemini-2.5-flash',
+    contextWindow: 1_048_576, // 1M tokens ish
+    maxOutputTokens: 65_536,
+    cost: {
+      inputCostPer1MTokens: {
+        standard: 0.30, // $0.30 per 1M tokens (text/image/video)
+        longContext: 0.30  // Same as no distinction
+      },
+      outputCostPer1MTokens: {
+        standard: 2.50, // $2.50 per 1M tokens
+        longContext: 2.50  // Same as no distinction
+      },
+      currency: 'USD',
+      lastUpdated: '2025-07-12',
       sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing'
     }
   }
