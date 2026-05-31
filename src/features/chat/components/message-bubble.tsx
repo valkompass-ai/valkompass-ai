@@ -1,13 +1,16 @@
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { deepmerge } from 'deepmerge-ts';
+import { ChatTrace } from '@/types';
+import WorkingTrace from './working-trace';
 
 interface MessageBubbleProps {
   message: string;
   role: "user" | "ai";
+  trace?: ChatTrace;
 }
 
-export default function MessageBubble({ message, role }: MessageBubbleProps) {
+export default function MessageBubble({ message, role, trace }: MessageBubbleProps) {
   const isUser = role === "user";
 
   const customSchema = deepmerge(defaultSchema, {
@@ -35,37 +38,40 @@ export default function MessageBubble({ message, role }: MessageBubbleProps) {
         {isUser ? (
           <span className="text-sm sm:text-base leading-relaxed">{message}</span>
         ) : (
-          <ReactMarkdown
-            rehypePlugins={[[rehypeSanitize, customSchema]]}
-            components={{
-              a: ({ ...props}) => (
-                <a className="text-blue-600 hover:text-blue-800 underline touch-manipulation" target="_blank" rel="noopener noreferrer" {...props} />
-              ),
-              p: ({ ...props }) => (
-                <p className="text-sm sm:text-base leading-relaxed mb-3 last:mb-0" {...props} />
-              ),
-              h1: ({ ...props }) => (
-                <h1 className="text-lg sm:text-xl font-bold mb-3 mt-2" {...props} />
-              ),
-              h2: ({ ...props }) => (
-                <h2 className="text-base sm:text-lg font-semibold mb-2 mt-2" {...props} />
-              ),
-              h3: ({ ...props }) => (
-                <h3 className="text-sm sm:text-base font-semibold mb-2 mt-2" {...props} />
-              ),
-              ul: ({ ...props }) => (
-                <ul className="list-disc list-inside space-y-1 mb-3" {...props} />
-              ),
-              ol: ({ ...props }) => (
-                <ol className="list-decimal list-inside space-y-1 mb-3" {...props} />
-              ),
-              li: ({ ...props }) => (
-                <li className="text-sm sm:text-base leading-relaxed" {...props} />
-              ),
-            }}
-          >
-            {message}
-          </ReactMarkdown>
+          <>
+            {trace && <WorkingTrace trace={trace} />}
+            <ReactMarkdown
+              rehypePlugins={[[rehypeSanitize, customSchema]]}
+              components={{
+                a: ({ ...props}) => (
+                  <a className="text-blue-600 hover:text-blue-800 underline touch-manipulation" target="_blank" rel="noopener noreferrer" {...props} />
+                ),
+                p: ({ ...props }) => (
+                  <p className="text-sm sm:text-base leading-relaxed mb-3 last:mb-0" {...props} />
+                ),
+                h1: ({ ...props }) => (
+                  <h1 className="text-lg sm:text-xl font-bold mb-3 mt-2" {...props} />
+                ),
+                h2: ({ ...props }) => (
+                  <h2 className="text-base sm:text-lg font-semibold mb-2 mt-2" {...props} />
+                ),
+                h3: ({ ...props }) => (
+                  <h3 className="text-sm sm:text-base font-semibold mb-2 mt-2" {...props} />
+                ),
+                ul: ({ ...props }) => (
+                  <ul className="list-disc list-inside space-y-1 mb-3" {...props} />
+                ),
+                ol: ({ ...props }) => (
+                  <ol className="list-decimal list-inside space-y-1 mb-3" {...props} />
+                ),
+                li: ({ ...props }) => (
+                  <li className="text-sm sm:text-base leading-relaxed" {...props} />
+                ),
+              }}
+            >
+              {message}
+            </ReactMarkdown>
+          </>
         )}
       </div>
     </div>

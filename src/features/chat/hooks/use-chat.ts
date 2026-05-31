@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Message } from '@/types';
-import { sendMessageToApi } from '../api/chat-api';
+import { ChatTrace, Message } from '@/types';
+import { streamMessageFromApi } from '../api/chat-api';
 import { v7 as uuidv7 } from 'uuid';
 
 /**
@@ -45,10 +45,16 @@ const formatChatHistory = (messages: Message[], maxLength: number = 5000): strin
   return truncationIndicator + truncated;
 };
 
+export interface StreamingChatState {
+  trace: ChatTrace | null;
+  answer: string;
+}
+
 export const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [streamingState, setStreamingState] = useState<StreamingChatState | null>(null);
 
   const sendMessage = async (messageText: string) => {
     // Format current chat history for this message
@@ -65,9 +71,26 @@ export const useChat = () => {
     setMessages((prevMessages) => [...prevMessages, newUserMessage]);
     setIsLoading(true);
     setError(null);
+    setStreamingState({
+      trace: null,
+      answer: '',
+    });
 
     try {
-      const aiMessage = await sendMessageToApi(newUserMessage);
+      const aiMessage = await streamMessageFromApi(newUserMessage, {
+        onTrace: (trace) => {
+          setStreamingState((current) => ({
+            trace,
+            answer: current?.answer ?? '',
+          }));
+        },
+        onAnswerDelta: (text) => {
+          setStreamingState((current) => ({
+            trace: current?.trace ?? null,
+            answer: (current?.answer ?? '') + text,
+          }));
+        },
+      });
       setMessages((prevMessages) => [...prevMessages, aiMessage]);
     } catch (e) {
       const err = e as Error;
@@ -82,18 +105,21 @@ export const useChat = () => {
       setMessages((prevMessages) => [...prevMessages, errorMessage]);
     } finally {
       setIsLoading(false);
+      setStreamingState(null);
     }
   };
 
   const clearMessages = () => {
     setMessages([]);
     setError(null);
+    setStreamingState(null);
   };
 
   return {
     messages,
     isLoading,
     error,
+    streamingState,
     sendMessage,
     clearMessages,
   };

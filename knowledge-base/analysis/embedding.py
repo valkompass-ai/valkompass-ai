@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 class EmbeddingClient:
     MODEL_NAME = "text-embedding-3-small"
+    DIMENSIONS = 1536
 
     def __init__(
         self, client: AsyncOpenAI | None = None, model_name: str | None = None
@@ -25,7 +26,9 @@ class EmbeddingClient:
         """Generates an embedding for the given text using the specified OpenAI model."""
         model_to_use = model if model else self.model_name
         text = text.replace("\n", " ")
-        response = await self.client.embeddings.create(input=[text], model=model_to_use)
+        response = await self.client.embeddings.create(
+            input=[text], model=model_to_use, dimensions=EmbeddingClient.DIMENSIONS
+        )
         return response.data[0].embedding
 
     async def embed_documents(

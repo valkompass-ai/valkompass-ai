@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Message } from "@/types";
-import { getGeminiChatResponse, AgentApproach } from "@/lib/gemini-service";
+import { ChatTrace, Message } from "@/types";
+import { getGeminiChatResponse, getGeminiChatResponseStream, AgentApproach } from "@/lib/gemini-service";
 import { withAnalytics, getUserId } from "@/lib/middleware/analytics";
 import { v7 as uuidv7 } from 'uuid';
 
@@ -13,6 +13,7 @@ async function chatHandler(req: NextRequest) {
     const body = await req.json();
     const userMessage: Message = body.message;
     const agentConfig = body.agentConfig || undefined;
+    const shouldStream = body.stream === true;
 
     if (!userMessage || typeof userMessage.text !== 'string') {
       return NextResponse.json({ error: "Invalid message format" }, { status: 400 });
@@ -20,6 +21,10 @@ async function chatHandler(req: NextRequest) {
 
     // Determine agent approach based on configuration
     const agentApproach: AgentApproach = determineAgentApproach(userMessage, agentConfig);
+
+    if (shouldStream) {
+      return createChatStreamResponse(userMessage, userId, agentApproach);
+    }
     
     // Use consolidated gemini service with agent approach
     const aiTextResponse = await getGeminiChatResponse(userMessage, userId, agentApproach);
@@ -42,6 +47,64 @@ async function chatHandler(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function createChatStreamResponse(
+  userMessage: Message,
+  userId: string,
+  agentApproach: AgentApproach
+): NextResponse {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (event: object) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+      let latestTrace: ChatTrace | undefined;
+
+      void (async () => {
+        try {
+          const aiTextResponse = await getGeminiChatResponseStream(
+            userMessage,
+            userId,
+            agentApproach,
+            {
+              onTraceUpdate: (trace) => {
+                latestTrace = trace;
+                send({ type: 'trace', trace });
+              },
+              onAnswerDelta: (text) => send({ type: 'answer_delta', text }),
+            }
+          );
+
+          const aiResponse: Message = {
+            id: uuidv7(),
+            text: aiTextResponse,
+            role: "ai",
+            timestamp: new Date(),
+            trace: latestTrace,
+          };
+
+          send({ type: 'complete', message: aiResponse });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Failed to stream chat response.";
+          send({ type: 'error', error: errorMessage });
+        } finally {
+          controller.close();
+        }
+      })();
+    },
+  });
+
+  return new NextResponse(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
 }
 
 // Configuration options for different agent approaches

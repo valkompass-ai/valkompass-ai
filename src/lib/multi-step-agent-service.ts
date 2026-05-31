@@ -3,6 +3,7 @@ import { getContextFromKB, RetrievedContext, RetrievedSegment } from "./knowledg
 import { generateSearchQueries, GeneratedQuery, QueryGenerationResult } from "./query-generation-service";
 import { trackLLMCall } from "./posthog";
 import { Message } from "@/types";
+import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
 
 export interface MultiStepAgentConfig {
   enableQueryGeneration: boolean;
@@ -31,6 +32,15 @@ export interface MultiStepRetrievalResult {
   };
 }
 
+export interface MultiStepTraceCallbacks {
+  onQueriesGenerated?: (queries: GeneratedQuery[]) => void | Promise<void>;
+  onQueryResult?: (
+    query: GeneratedQuery,
+    context: RetrievedContext | null,
+    error?: string
+  ) => void | Promise<void>;
+}
+
 const DEFAULT_CONFIG: MultiStepAgentConfig = {
   enableQueryGeneration: true,
   maxQueries: 5,
@@ -38,6 +48,11 @@ const DEFAULT_CONFIG: MultiStepAgentConfig = {
   deduplicateResults: true,
   maxSegmentsPerQuery: 25,
 };
+
+const { key: QUERY_LLM_MODEL_KEY, config: QUERY_LLM_CONFIG } = getLLMModelConfig(
+  process.env.QUERY_MODEL_KEY,
+  DEFAULT_QUERY_MODEL_KEY
+);
 
 interface QueryModel {
   generateContent: (prompt: string) => Promise<{
@@ -51,7 +66,8 @@ export const getMultiStepContext = async (
   message: Message,
   distinctId?: string,
   config: Partial<MultiStepAgentConfig> = {},
-  queryModel?: QueryModel
+  queryModel?: QueryModel,
+  traceCallbacks: MultiStepTraceCallbacks = {}
 ): Promise<MultiStepRetrievalResult> => {
   const overallStartTime = Date.now();
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
@@ -81,17 +97,26 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           const generatedText = response.text();
           const cleanedText = generatedText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
           const parsed = JSON.parse(cleanedText);
-          queries = parsed.queries.slice(0, finalConfig.maxQueries);
+          queries = parsed.queries.slice(0, finalConfig.maxQueries).map((query: GeneratedQuery) => ({
+            ...query,
+            partyFilter: query.partyFilter || undefined,
+          }));
           
           // Track the call
           if (distinctId) {
             const estimatedInputTokens = Math.ceil(queryGenPrompt.length / 4);
             const estimatedOutputTokens = Math.ceil(generatedText.length / 4);
-            await trackLLMCall(distinctId, 'google', 'gemini-2.5-flash-latest', 'query_generation', {
+            const estimatedCost = calculateLLMCost(
+              QUERY_LLM_MODEL_KEY,
+              estimatedInputTokens,
+              estimatedOutputTokens
+            );
+            await trackLLMCall(distinctId, QUERY_LLM_CONFIG.provider, QUERY_LLM_CONFIG.model, 'query_generation', {
               inputTokens: estimatedInputTokens,
               outputTokens: estimatedOutputTokens,
               totalTokens: estimatedInputTokens + estimatedOutputTokens,
               duration: Date.now() - queryGenStart,
+              cost: estimatedCost,
               success: true,
               messageId: message.id,
             });
@@ -103,7 +128,7 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           // Fallback to single query
           queries = [{ query: message.text, reasoning: 'Fallback to original query' }];
           if (distinctId) {
-            await trackLLMCall(distinctId, 'google', 'gemini-2.5-flash-latest', 'query_generation', {
+            await trackLLMCall(distinctId, QUERY_LLM_CONFIG.provider, QUERY_LLM_CONFIG.model, 'query_generation', {
               success: false,
               errorMessage: error instanceof Error ? error.message : 'Unknown error',
               messageId: message.id,
@@ -113,15 +138,18 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
       } else {
         // Original call if no queryModel provided
         queryGenerationResult = await generateSearchQueries(message.text, message.id, distinctId);
+        queries = queryGenerationResult.queries.slice(0, finalConfig.maxQueries);
         queryGenerationDuration = Date.now() - queryGenStartTime;
       }
 
+      await traceCallbacks.onQueriesGenerated?.(queries);
     } else {
       // Fallback to original query
       queries = [{
         query: message.text,
         reasoning: 'Original query - query generation disabled',
       }];
+      await traceCallbacks.onQueriesGenerated?.(queries);
     }
 
     // Step 2: Execute all queries in parallel
@@ -134,6 +162,7 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
         // Get context with optional party filtering
         const partyFilter = finalConfig.enablePartyFiltering ? generatedQuery.partyFilter : undefined;
         const context = await getContextFromKB(queryEmbedding, message.id, distinctId, partyFilter);
+        await traceCallbacks.onQueryResult?.(generatedQuery, context);
         
         return {
           query: generatedQuery,
@@ -141,10 +170,12 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           error: undefined,
         };
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        await traceCallbacks.onQueryResult?.(generatedQuery, null, errorMessage);
         return {
           query: generatedQuery,
           context: null,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
         };
       }
     });
