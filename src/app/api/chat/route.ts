@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Message } from "@/types";
+import { ChatTrace, Message } from "@/types";
 import { getGeminiChatResponse, getGeminiChatResponseStream, AgentApproach } from "@/lib/gemini-service";
 import { withAnalytics, getUserId } from "@/lib/middleware/analytics";
 import { v7 as uuidv7 } from 'uuid';
@@ -61,18 +61,19 @@ function createChatStreamResponse(
       const send = (event: object) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
+      let latestTrace: ChatTrace | undefined;
 
       void (async () => {
         try {
-          send({ type: 'reasoning_start' });
-
           const aiTextResponse = await getGeminiChatResponseStream(
             userMessage,
             userId,
             agentApproach,
             {
-              onReasoningDelta: (text) => send({ type: 'reasoning_delta', text }),
-              onReasoningComplete: () => send({ type: 'reasoning_complete' }),
+              onTraceUpdate: (trace) => {
+                latestTrace = trace;
+                send({ type: 'trace', trace });
+              },
               onAnswerDelta: (text) => send({ type: 'answer_delta', text }),
             }
           );
@@ -82,6 +83,7 @@ function createChatStreamResponse(
             text: aiTextResponse,
             role: "ai",
             timestamp: new Date(),
+            trace: latestTrace,
           };
 
           send({ type: 'complete', message: aiResponse });

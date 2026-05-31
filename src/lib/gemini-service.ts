@@ -1,10 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getOpenAIEmbedding } from "./openai-service";
-import { getContextFromKB, RetrievedContext } from "./knowledge-base-service";
+import { getContextFromKB, RetrievedContext, RetrievedSegment } from "./knowledge-base-service";
 import { getMultiStepContext, MultiStepAgentConfig, MultiStepRetrievalResult } from "./multi-step-agent-service";
 import { SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_NO_CONTEXT } from "./prompt";
 import { trackLLMCall, trackChatInteraction } from "./posthog";
-import { Message } from "@/types";
+import { ChatTrace, ChatTraceQuery, ChatTraceSource, Message } from "@/types";
 import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
 
 const API_KEY = process.env.GEMINI_API_KEY;
@@ -57,8 +57,7 @@ export interface AgentApproach {
 }
 
 export interface ChatStreamCallbacks {
-  onReasoningDelta?: (text: string) => void | Promise<void>;
-  onReasoningComplete?: () => void | Promise<void>;
+  onTraceUpdate?: (trace: ChatTrace) => void | Promise<void>;
   onAnswerDelta?: (text: string) => void | Promise<void>;
 }
 
@@ -115,13 +114,30 @@ const buildPrompt = (
 const getRetrievedContext = async (
   message: Message,
   distinctId: string | undefined,
-  agentApproach: AgentApproach
+  agentApproach: AgentApproach,
+  traceCallbacks?: {
+    onQueriesGenerated?: (queries: ChatTraceQuery[]) => void | Promise<void>;
+    onQueryResult?: (
+      query: ChatTraceQuery,
+      context: RetrievedContext | null,
+      error?: string
+    ) => void | Promise<void>;
+  }
 ): Promise<{
   retrievedContext: RetrievedContext | null;
   multiStepResult: MultiStepRetrievalResult | null;
 }> => {
   if (agentApproach.type === 'multi-step') {
-    const multiStepResult = await getMultiStepContext(message, distinctId, agentApproach.config, queryModel);
+    const multiStepResult = await getMultiStepContext(
+      message,
+      distinctId,
+      agentApproach.config,
+      queryModel,
+      {
+        onQueriesGenerated: traceCallbacks?.onQueriesGenerated,
+        onQueryResult: traceCallbacks?.onQueryResult,
+      }
+    );
     return {
       retrievedContext: multiStepResult.aggregatedContext,
       multiStepResult,
@@ -134,6 +150,40 @@ const getRetrievedContext = async (
     multiStepResult: null,
   };
 };
+
+const toTraceSource = (segment: RetrievedSegment): ChatTraceSource => ({
+  documentPath: segment.documentPath,
+  snippet: segment.segmentText.length > 220
+    ? `${segment.segmentText.slice(0, 217).trim()}...`
+    : segment.segmentText,
+  similarityScore: segment.similarityScore,
+  publicUrl: segment.publicUrl,
+  partyAbbreviation: segment.partyAbbreviation,
+  page: segment.segmentPage,
+  sourceType: segment.documentSourceType,
+});
+
+const createInitialTrace = (mode: AgentApproach['type']): ChatTrace => ({
+  mode,
+  status: 'running',
+  events: [],
+  queries: [],
+  sources: [],
+  documentCount: 0,
+  segmentCount: 0,
+});
+
+const traceModeLabel = (mode: AgentApproach['type']) => mode === 'multi-step' ? 'flersteg' : 'ensteg';
+
+const cloneTrace = (trace: ChatTrace): ChatTrace => ({
+  ...trace,
+  events: [...trace.events],
+  queries: trace.queries.map((query) => ({
+    ...query,
+    sources: query.sources ? [...query.sources] : undefined,
+  })),
+  sources: [...trace.sources],
+});
 
 const updateChatHistory = (userText: string, aiText: string) => {
   chatHistory.push({ role: "user", parts: [{ text: userText }] });
@@ -316,35 +366,96 @@ export const getGeminiChatResponseStream = async (
   let aiResponse = "";
   let success = true;
   let errorMessage = "";
+  const trace = createInitialTrace(agentApproach.type);
 
-  const emitReasoning = async (text: string) => {
-    await callbacks.onReasoningDelta?.(text);
+  const emitTrace = async () => {
+    await callbacks.onTraceUpdate?.(cloneTrace(trace));
+  };
+
+  const addTraceEvent = async (event: string) => {
+    trace.events.push(event);
+    await emitTrace();
+  };
+
+  const updateTraceFromContext = async (context: RetrievedContext | null) => {
+    trace.topicName = context?.topicName || undefined;
+    trace.sources = (context?.segments ?? []).map(toTraceSource);
+    trace.segmentCount = trace.sources.length;
+    trace.documentCount = context?.documentsReferenced?.length ?? 0;
+    await emitTrace();
   };
 
   try {
-    await emitReasoning("Jag läser frågan och väljer hur jag ska söka i källorna.\n");
+    await addTraceEvent(`Källhämtning: ${traceModeLabel(agentApproach.type)}`);
 
     if (agentApproach.type === 'multi-step') {
-      await emitReasoning("Jag använder flera riktade sökningar för att fånga relevanta partiståndpunkter.\n");
+      await addTraceEvent("Skapar sökningar");
     } else {
-      await emitReasoning("Jag gör en fokuserad sökning mot kunskapsbasen.\n");
+      trace.queries = [{ query: message.text }];
+      await addTraceEvent(`Söker efter "${message.text}"`);
     }
 
-    const contextResult = await getRetrievedContext(message, distinctId, agentApproach);
+    const contextResult = await getRetrievedContext(
+      message,
+      distinctId,
+      agentApproach,
+      {
+        onQueriesGenerated: async (queries) => {
+          trace.queries = queries.map((query) => ({
+            query: query.query,
+            partyFilter: query.partyFilter,
+            reasoning: query.reasoning,
+          }));
+          await addTraceEvent(`Skapade ${trace.queries.length} sökningar`);
+        },
+        onQueryResult: async (query, context, error) => {
+          const queryIndex = trace.queries.findIndex((item) =>
+            item.query === query.query && item.partyFilter === query.partyFilter
+          );
+          const queryTrace: ChatTraceQuery = {
+            query: query.query,
+            partyFilter: query.partyFilter,
+            reasoning: query.reasoning,
+            returnedSegments: context?.segments.length ?? 0,
+            error,
+            sources: (context?.segments ?? []).map(toTraceSource),
+          };
+
+          if (queryIndex >= 0) {
+            trace.queries[queryIndex] = {
+              ...trace.queries[queryIndex],
+              ...queryTrace,
+            };
+          } else {
+            trace.queries.push(queryTrace);
+          }
+
+          await addTraceEvent(error
+            ? `Sökningen "${query.query}" misslyckades`
+            : `Sökningen "${query.query}" gav ${queryTrace.returnedSegments ?? 0} segment`
+          );
+        },
+      }
+    );
     retrievedContext = contextResult.retrievedContext;
     multiStepResult = contextResult.multiStepResult;
 
-    const segmentCount = retrievedContext?.segments.length ?? 0;
-    const documentCount = retrievedContext?.documentsReferenced?.length ?? 0;
-
-    if (segmentCount > 0) {
-      await emitReasoning(`Jag hittade ${segmentCount} relevanta källavsnitt från ${documentCount} dokument.\n`);
-    } else {
-      await emitReasoning("Jag hittade inget tydligt källunderlag och kommer att vara försiktig i svaret.\n");
+    if (agentApproach.type === 'single') {
+      trace.queries[0] = {
+        ...trace.queries[0],
+        returnedSegments: retrievedContext?.segments.length ?? 0,
+        sources: (retrievedContext?.segments ?? []).map(toTraceSource),
+      };
+      await addTraceEvent(`Sökningen "${message.text}" gav ${trace.queries[0].returnedSegments ?? 0} segment`);
     }
 
-    await emitReasoning("Jag formulerar svaret med källmaterialet som grund.\n");
-    await callbacks.onReasoningComplete?.();
+    await updateTraceFromContext(retrievedContext);
+
+    if (trace.segmentCount > 0) {
+      await addTraceEvent(`Förbereder svar från ${trace.segmentCount} källsegment`);
+    } else {
+      await addTraceEvent("Hittade inget tydligt källunderlag");
+    }
 
     const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
     const estimatedInputTokens = estimateTokens(fullPrompt);
@@ -356,6 +467,7 @@ export const getGeminiChatResponseStream = async (
     });
 
     const result = await chat.sendMessageStream(fullPrompt);
+    await addTraceEvent("Skriver svaret");
 
     for await (const chunk of result.stream) {
       const delta = chunk.text();
@@ -393,10 +505,14 @@ export const getGeminiChatResponseStream = async (
     }
 
     updateChatHistory(message.text, aiResponse);
+    trace.status = 'complete';
+    await emitTrace();
     return aiResponse;
   } catch (error) {
     success = false;
     errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    trace.status = 'error';
+    await addTraceEvent("Svaret misslyckades");
 
     if (distinctId) {
       await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion_stream', {
@@ -423,8 +539,8 @@ export const getGeminiChatResponseStream = async (
       aiResponse = "Sorry, I encountered an unexpected error. Please try again later.";
     }
 
-    await callbacks.onReasoningComplete?.();
     await callbacks.onAnswerDelta?.(aiResponse);
+    await emitTrace();
     return aiResponse;
   } finally {
     if (distinctId) {

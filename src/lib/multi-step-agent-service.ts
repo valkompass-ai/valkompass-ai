@@ -32,6 +32,15 @@ export interface MultiStepRetrievalResult {
   };
 }
 
+export interface MultiStepTraceCallbacks {
+  onQueriesGenerated?: (queries: GeneratedQuery[]) => void | Promise<void>;
+  onQueryResult?: (
+    query: GeneratedQuery,
+    context: RetrievedContext | null,
+    error?: string
+  ) => void | Promise<void>;
+}
+
 const DEFAULT_CONFIG: MultiStepAgentConfig = {
   enableQueryGeneration: true,
   maxQueries: 5,
@@ -57,7 +66,8 @@ export const getMultiStepContext = async (
   message: Message,
   distinctId?: string,
   config: Partial<MultiStepAgentConfig> = {},
-  queryModel?: QueryModel
+  queryModel?: QueryModel,
+  traceCallbacks: MultiStepTraceCallbacks = {}
 ): Promise<MultiStepRetrievalResult> => {
   const overallStartTime = Date.now();
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
@@ -87,7 +97,10 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           const generatedText = response.text();
           const cleanedText = generatedText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
           const parsed = JSON.parse(cleanedText);
-          queries = parsed.queries.slice(0, finalConfig.maxQueries);
+          queries = parsed.queries.slice(0, finalConfig.maxQueries).map((query: GeneratedQuery) => ({
+            ...query,
+            partyFilter: query.partyFilter || undefined,
+          }));
           
           // Track the call
           if (distinctId) {
@@ -125,15 +138,18 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
       } else {
         // Original call if no queryModel provided
         queryGenerationResult = await generateSearchQueries(message.text, message.id, distinctId);
+        queries = queryGenerationResult.queries.slice(0, finalConfig.maxQueries);
         queryGenerationDuration = Date.now() - queryGenStartTime;
       }
 
+      await traceCallbacks.onQueriesGenerated?.(queries);
     } else {
       // Fallback to original query
       queries = [{
         query: message.text,
         reasoning: 'Original query - query generation disabled',
       }];
+      await traceCallbacks.onQueriesGenerated?.(queries);
     }
 
     // Step 2: Execute all queries in parallel
@@ -146,6 +162,7 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
         // Get context with optional party filtering
         const partyFilter = finalConfig.enablePartyFiltering ? generatedQuery.partyFilter : undefined;
         const context = await getContextFromKB(queryEmbedding, message.id, distinctId, partyFilter);
+        await traceCallbacks.onQueryResult?.(generatedQuery, context);
         
         return {
           query: generatedQuery,
@@ -153,10 +170,12 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           error: undefined,
         };
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        await traceCallbacks.onQueryResult?.(generatedQuery, null, errorMessage);
         return {
           query: generatedQuery,
           context: null,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
         };
       }
     });

@@ -1,15 +1,12 @@
-import { Message } from "@/types";
+import { ChatTrace, Message } from "@/types";
 
 export interface ChatStreamHandlers {
-  onReasoningDelta?: (text: string) => void;
-  onReasoningComplete?: () => void;
+  onTrace?: (trace: ChatTrace) => void;
   onAnswerDelta?: (text: string) => void;
 }
 
 type ChatStreamEvent =
-  | { type: 'reasoning_start' }
-  | { type: 'reasoning_delta'; text: string }
-  | { type: 'reasoning_complete' }
+  | { type: 'trace'; trace: ChatTrace }
   | { type: 'answer_delta'; text: string }
   | { type: 'complete'; message: Message }
   | { type: 'error'; error: string };
@@ -64,11 +61,8 @@ export const streamMessageFromApi = async (
 
   const handleEvent = (event: ChatStreamEvent) => {
     switch (event.type) {
-      case 'reasoning_delta':
-        handlers.onReasoningDelta?.(event.text);
-        break;
-      case 'reasoning_complete':
-        handlers.onReasoningComplete?.();
+      case 'trace':
+        handlers.onTrace?.(event.trace);
         break;
       case 'answer_delta':
         handlers.onAnswerDelta?.(event.text);
@@ -79,8 +73,6 @@ export const streamMessageFromApi = async (
         break;
       case 'error':
         throw new Error(event.error);
-      case 'reasoning_start':
-        break;
     }
   };
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Message } from '@/types';
+import { ChatTrace, Message } from '@/types';
 import { streamMessageFromApi } from '../api/chat-api';
 import { v7 as uuidv7 } from 'uuid';
 
@@ -46,8 +46,7 @@ const formatChatHistory = (messages: Message[], maxLength: number = 5000): strin
 };
 
 export interface StreamingChatState {
-  reasoning: string;
-  reasoningCollapsed: boolean;
+  trace: ChatTrace | null;
   answer: string;
 }
 
@@ -73,30 +72,21 @@ export const useChat = () => {
     setIsLoading(true);
     setError(null);
     setStreamingState({
-      reasoning: '',
-      reasoningCollapsed: false,
+      trace: null,
       answer: '',
     });
 
     try {
       const aiMessage = await streamMessageFromApi(newUserMessage, {
-        onReasoningDelta: (text) => {
+        onTrace: (trace) => {
           setStreamingState((current) => ({
-            reasoning: (current?.reasoning ?? '') + text,
-            reasoningCollapsed: current?.reasoningCollapsed ?? false,
+            trace,
             answer: current?.answer ?? '',
           }));
         },
-        onReasoningComplete: () => {
-          setStreamingState((current) => current
-            ? { ...current, reasoningCollapsed: true }
-            : current
-          );
-        },
         onAnswerDelta: (text) => {
           setStreamingState((current) => ({
-            reasoning: current?.reasoning ?? '',
-            reasoningCollapsed: true,
+            trace: current?.trace ?? null,
             answer: (current?.answer ?? '') + text,
           }));
         },

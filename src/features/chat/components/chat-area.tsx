@@ -42,7 +42,7 @@ export default function ChatArea() {
           ) : (
             <div className="space-y-4">
               {messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg.text} role={msg.role} />
+                <MessageBubble key={msg.id} message={msg.text} role={msg.role} trace={msg.trace} />
               ))}
               {isLoading && <MessageBubbleLoading stream={streamingState} />}
               {error && (
