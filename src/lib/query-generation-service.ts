@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { LLM_MODELS, calculateLLMCost, type LLMModelKey } from "@/types/model-types";
+import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
 import { trackLLMCall } from "./posthog";
 
 const API_KEY = process.env.GEMINI_API_KEY;
@@ -10,9 +10,10 @@ if (!API_KEY) {
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 
-// Using a faster model for query generation
-const QUERY_LLM_MODEL_KEY: LLMModelKey = 'gemini-1.5-flash-latest';
-const QUERY_LLM_CONFIG = LLM_MODELS[QUERY_LLM_MODEL_KEY];
+const { key: QUERY_LLM_MODEL_KEY, config: QUERY_LLM_CONFIG } = getLLMModelConfig(
+  process.env.QUERY_MODEL_KEY,
+  DEFAULT_QUERY_MODEL_KEY
+);
 const QUERY_MODEL_NAME = QUERY_LLM_CONFIG.model;
 
 const queryModel = genAI.getGenerativeModel({

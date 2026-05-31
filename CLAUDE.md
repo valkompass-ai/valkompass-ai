@@ -27,10 +27,10 @@ Important runtime files:
 - `src/lib/gemini-service.ts`: orchestrates retrieval, prompt construction, Gemini calls, retries, and analytics.
 - `src/lib/multi-step-agent-service.ts`: generates multiple targeted search queries and aggregates retrieved context.
 - `src/lib/knowledge-base-service.ts`: queries Neo4j `topic_embedding_idx` and `segment_embedding_idx`.
-- `src/lib/openai-service.ts`: creates `text-embedding-3-small` embeddings.
+- `src/lib/openai-service.ts`: creates `text-embedding-3-small` embeddings with 1536 dimensions.
 - `src/lib/prompt.ts`: source-grounding, citation, Swedish-politics scope, and language rules.
 
-Current app model settings live in `src/types/model-types.ts`. As of this guide, chat and local query generation use `gemini-2.5-flash-lite`; embeddings use `text-embedding-3-small` with 1536 dimensions.
+Current app model settings live in `src/types/model-types.ts`. As of this guide, chat and local query generation default to `gemini-3.1-flash-lite`; `gemini-3.5-flash` is available as the higher-quality Flash option. Embeddings use `text-embedding-3-small` with 1536 dimensions.
 
 ## Package Managers
 

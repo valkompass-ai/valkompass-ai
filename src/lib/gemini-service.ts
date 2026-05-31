@@ -5,7 +5,7 @@ import { getMultiStepContext, MultiStepAgentConfig, MultiStepRetrievalResult } f
 import { SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_NO_CONTEXT } from "./prompt";
 import { trackLLMCall, trackChatInteraction } from "./posthog";
 import { Message } from "@/types";
-import { LLM_MODELS, calculateLLMCost, type LLMModelKey } from "@/types/model-types";
+import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
@@ -15,11 +15,11 @@ if (!API_KEY) {
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 
-// Using the model configuration from centralized types
-const LLM_MODEL_KEY: LLMModelKey = 'gemini-2.5-flash-lite';
-const LLM_MODEL_QUERY_KEY: LLMModelKey = 'gemini-2.5-flash-lite';
-const LLM_CONFIG = LLM_MODELS[LLM_MODEL_KEY];
-const LLM_CONFIG_QUERY = LLM_MODELS[LLM_MODEL_QUERY_KEY];
+const { key: LLM_MODEL_KEY, config: LLM_CONFIG } = getLLMModelConfig(process.env.CHAT_MODEL_KEY);
+const { config: LLM_CONFIG_QUERY } = getLLMModelConfig(
+  process.env.QUERY_MODEL_KEY,
+  DEFAULT_QUERY_MODEL_KEY
+);
 const MODEL_NAME = LLM_CONFIG.model;
 
 const model = genAI.getGenerativeModel({

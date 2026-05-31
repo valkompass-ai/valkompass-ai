@@ -3,6 +3,7 @@ import { getContextFromKB, RetrievedContext, RetrievedSegment } from "./knowledg
 import { generateSearchQueries, GeneratedQuery, QueryGenerationResult } from "./query-generation-service";
 import { trackLLMCall } from "./posthog";
 import { Message } from "@/types";
+import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
 
 export interface MultiStepAgentConfig {
   enableQueryGeneration: boolean;
@@ -38,6 +39,11 @@ const DEFAULT_CONFIG: MultiStepAgentConfig = {
   deduplicateResults: true,
   maxSegmentsPerQuery: 25,
 };
+
+const { key: QUERY_LLM_MODEL_KEY, config: QUERY_LLM_CONFIG } = getLLMModelConfig(
+  process.env.QUERY_MODEL_KEY,
+  DEFAULT_QUERY_MODEL_KEY
+);
 
 interface QueryModel {
   generateContent: (prompt: string) => Promise<{
@@ -87,11 +93,17 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           if (distinctId) {
             const estimatedInputTokens = Math.ceil(queryGenPrompt.length / 4);
             const estimatedOutputTokens = Math.ceil(generatedText.length / 4);
-            await trackLLMCall(distinctId, 'google', 'gemini-2.5-flash-latest', 'query_generation', {
+            const estimatedCost = calculateLLMCost(
+              QUERY_LLM_MODEL_KEY,
+              estimatedInputTokens,
+              estimatedOutputTokens
+            );
+            await trackLLMCall(distinctId, QUERY_LLM_CONFIG.provider, QUERY_LLM_CONFIG.model, 'query_generation', {
               inputTokens: estimatedInputTokens,
               outputTokens: estimatedOutputTokens,
               totalTokens: estimatedInputTokens + estimatedOutputTokens,
               duration: Date.now() - queryGenStart,
+              cost: estimatedCost,
               success: true,
               messageId: message.id,
             });
@@ -103,7 +115,7 @@ Output in STRICT JSON format without any additional text: { "queries": [ { "quer
           // Fallback to single query
           queries = [{ query: message.text, reasoning: 'Fallback to original query' }];
           if (distinctId) {
-            await trackLLMCall(distinctId, 'google', 'gemini-2.5-flash-latest', 'query_generation', {
+            await trackLLMCall(distinctId, QUERY_LLM_CONFIG.provider, QUERY_LLM_CONFIG.model, 'query_generation', {
               success: false,
               errorMessage: error instanceof Error ? error.message : 'Unknown error',
               messageId: message.id,

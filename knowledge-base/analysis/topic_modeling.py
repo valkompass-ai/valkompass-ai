@@ -93,7 +93,7 @@ def extract_topics(
         if embeddings.shape[0] > 0 and embeddings.shape[0] % len(valid_segments) == 0:
             # This is a heuristic, assuming all embeddings have the same known dimension if it was flattened
             try:
-                # Attempt to infer embedding dimension, e.g. 1536 for text-embedding-3-small
+                # Attempt to infer embedding dimension, e.g. 1536 for the configured embedding model
                 # This part is risky without knowing the exact embedding dimension used.
                 # For now, we'll rely on UMAP/PCA to handle it or error out if incompatible.
                 # A better fix would be to ensure embeddings are always stored/retrieved as 2D.

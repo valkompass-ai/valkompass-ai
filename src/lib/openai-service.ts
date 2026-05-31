@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { trackEmbeddingCall } from './posthog';
-import { EMBEDDING_MODELS, calculateEmbeddingCost, type EmbeddingModelKey } from '@/types/model-types';
+import { calculateEmbeddingCost, getEmbeddingModelConfig } from '@/types/model-types';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -12,9 +12,9 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Using the model configuration from centralized types
-const EMBEDDING_MODEL_KEY: EmbeddingModelKey = 'text-embedding-3-small';
-const EMBEDDING_CONFIG = EMBEDDING_MODELS[EMBEDDING_MODEL_KEY];
+const { key: EMBEDDING_MODEL_KEY, config: EMBEDDING_CONFIG } = getEmbeddingModelConfig(
+  process.env.EMBEDDING_MODEL_KEY
+);
 const EMBEDDING_MODEL = EMBEDDING_CONFIG.model;
 const DIMENSIONS = EMBEDDING_CONFIG.dimensions;
 
