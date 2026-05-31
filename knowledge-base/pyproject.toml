@@ -5,28 +5,28 @@ description = "Knowledge base builder for valkompass.ai"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "bertopic>=0.17.0",
-    "nltk>=3.9.1",
-    "pdfplumber>=0.11.6",
-    "pydantic>=2.11.5",
-    "sentence-transformers>=4.1.0",
-    "langdetect>=1.0.9",
-    "scikit-learn>=1.0",
-    "tqdm>=4.67.1",
-    "langchain-text-splitters>=0.3.8",
-    "einops>=0.8.1",
-    "openai>=1.82.0",
-    "python-dotenv>=1.1.0",
-    "spacy>=3.8.7",
-    "pip>=25.1.1",
-    "neo4j>=5.28.1",
+    "bertopic==0.17.4",
+    "nltk==3.9.4",
+    "pdfplumber==0.11.9",
+    "pydantic==2.13.4",
+    "sentence-transformers==5.5.1",
+    "langdetect==1.0.9",
+    "scikit-learn==1.8.0",
+    "tqdm==4.67.3",
+    "langchain-text-splitters==1.1.2",
+    "einops==0.8.2",
+    "openai==2.38.0",
+    "python-dotenv==1.2.2",
+    "spacy==3.8.14",
+    "pip==26.1.1",
+    "neo4j==6.2.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3.5",
-    "pytest-asyncio>=1.0.0",
-    "ruff>=0.11.13",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.15.15",
 ]
 
 [tool.setuptools]

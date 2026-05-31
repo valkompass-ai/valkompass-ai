@@ -32,17 +32,10 @@ export default defineConfig({
     outputFile: {
       junit: './test-results.xml',
     },
-    // Pool options for better CI performance
-    pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
   },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
   },
-}) 
+})

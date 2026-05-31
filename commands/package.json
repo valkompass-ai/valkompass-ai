@@ -14,8 +14,8 @@
     "test-enrich-voteringar": "bunx tsx enrich-voteringar-test.ts"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "tsx": "^4.7.0",
-    "typescript": "^5.0.0"
+    "@types/node": "25.9.1",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3"
   }
 }
