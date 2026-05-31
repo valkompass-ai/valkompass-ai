@@ -1,0 +1,18 @@
+{
+  "run_id": "20260531T183537Z",
+  "generated_at": "2026-05-31T18:35:37+00:00",
+  "registry_sha256": "14f1f9fc7230a98653f4c864160a40f96e4844f3c251efe9249ac681570b48e1",
+  "parties": [
+    "V"
+  ],
+  "sources": [
+    "v-partiprogram",
+    "v-politik-a-o"
+  ],
+  "fetched": 105,
+  "unchanged": 0,
+  "extracted_documents": 2,
+  "extracted_items": 105,
+  "skipped": [],
+  "failures": []
+}

@@ -1,6 +1,12 @@
 test-kb:
 	cd knowledge-base && uv run pytest
 
+validate-source-registry:
+	cd knowledge-base && uv run python -m sources.cli validate-registry
+
+crawl-party-sources:
+	cd knowledge-base && uv run python -m sources.cli crawl --all
+
 parse-kb-docs:
 	cd knowledge-base && uv run python main.py --actions parse
 
@@ -19,4 +25,3 @@ graph-kb-clear:
 # Default action is parse then embed
 process-kb-docs:
 	cd knowledge-base && uv run python main.py --actions parse embed topicmodel graph
-

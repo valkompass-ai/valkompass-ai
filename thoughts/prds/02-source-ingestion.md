@@ -7,7 +7,7 @@ Valkompass.ai needs a transparent, reproducible, and auditable source-ingestion 
 The next system must treat source ingestion as a data supply chain:
 
 ```text
-source registry -> polite fetch -> committed snapshots -> extracted documents -> segments -> embeddings -> Neo4j index -> cited answer
+source registry -> registry-bound fetch -> committed manifest/report -> extracted documents -> segments -> embeddings -> Neo4j index -> cited answer
 ```
 
 Every committed data artifact should answer:
@@ -16,7 +16,7 @@ Every committed data artifact should answer:
 - What URL was requested and what final URL was fetched?
 - When was it fetched?
 - What HTTP metadata was observed?
-- What raw bytes were committed?
+- What raw bytes were fetched, and what SHA-256 hash identifies them?
 - What canonical text was indexed?
 - Which parser/version produced the derived text?
 - Which segment hash was embedded and stored in Neo4j?
@@ -79,7 +79,7 @@ The first `source-registry.json` should start conservative. Each party gets one 
 
 ## Product Requirements
 
-1. All source material used by the app must be committed in the repo or generated from committed raw data.
+1. All source material used by the app must be traceable from committed structured data and manifests. Raw fetched bytes may remain an ignored local cache when the manifest records enough metadata to reproduce or verify the fetch.
 2. Every source must be declared in a reviewed JSON registry before it can be crawled.
 3. Every fetch run must produce a committed manifest and report.
 4. Every raw fetched artifact must have a SHA-256 hash, byte size, media type, request URL, final URL, party, source definition ID, and fetch timestamp.
@@ -149,13 +149,21 @@ Registry rules:
 
 ### Snapshot Store
 
-Add committed raw snapshots under:
+Add committed manifests and reports under:
 
 ```text
 knowledge-base/source-snapshots/
   manifest.json
   runs/
     2026-05-31T160000Z.json
+  reports/
+    2026-05-31T160000Z.md
+```
+
+Raw byte snapshots may be kept locally while crawling, but are ignored by Git:
+
+```text
+knowledge-base/source-snapshots/
   raw/
     socialdemokraterna/
       s-politik-a-till-o/
@@ -354,13 +362,13 @@ Use mocked HTTP responses for crawler tests. Do not require live party websites 
 1. Add fetcher with user agent, rate limits, redirects, retries, conditional GET, and SHA-256 hashing.
 2. Add manifest and run report writers.
 3. Implement dry-run mode that discovers candidate URLs without writing raw snapshots.
-4. Commit the first dry-run report for review before committing large source snapshots.
+4. Commit the first dry-run report for review before committing large structured outputs.
 
 ### Phase 3: HTML/PDF Extraction
 
 1. Add HTML canonical text extraction for central party policy pages.
-2. Preserve raw HTML snapshots and generated schema-versioned website JSON.
-3. Preserve downloaded PDFs as raw committed artifacts with snapshot metadata.
+2. Preserve generated schema-versioned website JSON and manifest hashes for raw HTML.
+3. Preserve downloaded PDFs as either committed source documents when intentionally curated or ignored local raw snapshots with manifest metadata.
 4. Update `json_website_parser.py` to parse both legacy and schema-versioned JSON.
 5. Add tests for representative party HTML and PDF metadata.
 
@@ -374,7 +382,7 @@ Use mocked HTTP responses for crawler tests. Do not require live party websites 
 ### Phase 5: First 2026 Data Refresh
 
 1. Run crawler for each party in dry-run mode and review exclusions.
-2. Run crawler for core sources and commit raw snapshots, manifests, extracted JSON/PDF files, and reports.
+2. Run crawler for core sources and commit manifests, extracted JSON/PDF files, and reports; keep raw crawler byte caches ignored unless a source is intentionally curated as a document.
 3. Run parse, embed, topic modeling, and graph import.
 4. Commit structured knowledge-base updates.
 5. Update the roadmap item status and README/agent docs if commands or data layout changed.
@@ -384,10 +392,38 @@ Use mocked HTTP responses for crawler tests. Do not require live party websites 
 - A reviewer can open `source-registry.json` and see every configured party source that is allowed into the knowledge base.
 - A reviewer can inspect a crawl report and understand coverage, failures, exclusions, and changed content.
 - A committed structured document can be traced to a snapshot manifest entry by `snapshot_id`.
-- A snapshot manifest entry can be traced to raw committed bytes by path and SHA-256.
+- A snapshot manifest entry records enough metadata to verify the fetched bytes by SHA-256 and to reproduce or inspect the local raw cache when present.
 - A Neo4j segment used in retrieval contains enough metadata to trace it back to source URL, snapshot ID, source hash, parser version, and capture date.
 - Re-running the crawler with unchanged source content produces no noisy rewrites.
 - CI covers registry validation, parsers, hashing, stable IDs, and graph source metadata.
+
+## Implementation Notes
+
+Implemented in this branch with:
+
+- `knowledge-base/source-registry.json` for eight major Riksdag parties and nine configured sources.
+- `knowledge-base/sources/` crawler modules for registry validation, bounded discovery, fetching, hashing, extraction, manifests, and reports.
+- Ignored local raw source cache paths under `knowledge-base/source-snapshots/raw/`, with committed hashes in the manifest.
+- Snapshot manifest and per-run reports under `knowledge-base/source-snapshots/`.
+- Parser-compatible web documents under `knowledge-base/documents/{party}/web/`.
+- Provenance fields on `Document` and `DocumentSegment`.
+- Neo4j `Source` and `SourceSnapshot` support.
+
+Final crawl coverage:
+
+| Party | Source | Extracted Items |
+| --- | --- | ---: |
+| S | `s-politik-a-till-o` | 135 |
+| M | `m-var-politik` | 25 |
+| SD | `sd-vad-vi-vill` | 16 |
+| MP | `mp-politik` | 53 |
+| C | `c-politik-a-o` | 29 |
+| L | `l-politik-a-o` | 127 |
+| KD | `kd-politik-a-o` | 217 |
+| V | `v-politik-a-o` | 104 |
+| V | `v-partiprogram` | 1 |
+
+The committed manifest contains 707 snapshot records. Raw cache paths are recorded for local verification, but `knowledge-base/source-snapshots/raw/` is intentionally ignored and not part of the committed repository state.
 
 ## References
 

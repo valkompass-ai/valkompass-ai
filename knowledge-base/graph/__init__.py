@@ -24,6 +24,14 @@ SCHEMA = {
             "name": "party_abbreviation_unique",
             "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Party) REQUIRE n.abbreviation IS UNIQUE",
         },
+        {
+            "name": "source_id_unique",
+            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Source) REQUIRE n.source_id IS UNIQUE",
+        },
+        {
+            "name": "source_snapshot_id_unique",
+            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:SourceSnapshot) REQUIRE n.snapshot_id IS UNIQUE",
+        },
     ],
     "indexes": [
         # basic look-ups
@@ -38,6 +46,26 @@ SCHEMA = {
         {
             "name": "party_full_name_idx",
             "cypher": "INDEX party_full_name_idx IF NOT EXISTS FOR (n:Party) ON (n.full_name)",
+        },
+        {
+            "name": "doc_source_id_idx",
+            "cypher": "INDEX doc_source_id_idx IF NOT EXISTS FOR (n:Document) ON (n.source_id)",
+        },
+        {
+            "name": "doc_party_id_idx",
+            "cypher": "INDEX doc_party_id_idx IF NOT EXISTS FOR (n:Document) ON (n.party_id)",
+        },
+        {
+            "name": "doc_canonical_text_sha256_idx",
+            "cypher": "INDEX doc_canonical_text_sha256_idx IF NOT EXISTS FOR (n:Document) ON (n.canonical_text_sha256)",
+        },
+        {
+            "name": "segment_sha256_idx",
+            "cypher": "INDEX segment_sha256_idx IF NOT EXISTS FOR (n:DocumentSegment) ON (n.segment_sha256)",
+        },
+        {
+            "name": "source_snapshot_raw_sha256_idx",
+            "cypher": "INDEX source_snapshot_raw_sha256_idx IF NOT EXISTS FOR (n:SourceSnapshot) ON (n.raw_sha256)",
         },
         # vector indexes for fast embedding search (requires Neo4j vector plugin)
         {
@@ -119,12 +147,76 @@ class SchemaManager:
                 """
                 MERGE (d:Document {id:$id})
                 SET d.path        = $path,
-                    d.raw_content = $raw_content
+                    d.raw_content = $raw_content,
+                    d.source_id = $source_id,
+                    d.party_id = $party_id,
+                    d.source_type = $source_type,
+                    d.election_year = $election_year,
+                    d.public_url = $public_url,
+                    d.snapshot_id = $snapshot_id,
+                    d.raw_sha256 = $raw_sha256,
+                    d.canonical_text_sha256 = $canonical_text_sha256,
+                    d.captured_at = $captured_at,
+                    d.parser_version = $parser_version
                 """,
                 id=doc.id,
                 path=doc.path,
                 raw_content=doc.raw_content,
+                source_id=doc.source_id,
+                party_id=doc.party_id,
+                source_type=doc.source_type,
+                election_year=doc.election_year,
+                public_url=doc.public_url,
+                snapshot_id=doc.snapshot_id,
+                raw_sha256=doc.raw_sha256,
+                canonical_text_sha256=doc.canonical_text_sha256,
+                captured_at=doc.captured_at,
+                parser_version=doc.parser_version,
             )
+
+            if doc.source_id:
+                session.run(
+                    """
+                    MERGE (src:Source {source_id:$source_id})
+                    SET src.source_type = $source_type,
+                        src.election_year = $election_year,
+                        src.public_url = $public_url
+                    WITH src
+                    OPTIONAL MATCH (p:Party {abbreviation:$party_id})
+                    FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+                        MERGE (p)-[:PUBLISHES]->(src)
+                    )
+                    """,
+                    source_id=doc.source_id,
+                    source_type=doc.source_type,
+                    election_year=doc.election_year,
+                    public_url=doc.public_url,
+                    party_id=doc.party_id,
+                )
+
+            if doc.snapshot_id:
+                session.run(
+                    """
+                    MERGE (snap:SourceSnapshot {snapshot_id:$snapshot_id})
+                    SET snap.raw_sha256 = $raw_sha256,
+                        snap.captured_at = $captured_at,
+                        snap.public_url = $public_url
+                    WITH snap
+                    MATCH (d:Document {id:$doc_id})
+                    MERGE (snap)-[:EXTRACTED_TO]->(d)
+                    WITH snap
+                    OPTIONAL MATCH (src:Source {source_id:$source_id})
+                    FOREACH (_ IN CASE WHEN src IS NULL THEN [] ELSE [1] END |
+                        MERGE (src)-[:HAS_SNAPSHOT]->(snap)
+                    )
+                    """,
+                    snapshot_id=doc.snapshot_id,
+                    raw_sha256=doc.raw_sha256,
+                    captured_at=doc.captured_at,
+                    public_url=doc.public_url,
+                    doc_id=doc.id,
+                    source_id=doc.source_id,
+                )
 
             # Prepare segment data for bulk upsert
             segments_data = []
@@ -145,6 +237,10 @@ class SchemaManager:
                         "public_url": seg.public_url,
                         "doc_id": doc.id,
                         "type": seg.type,
+                        "segment_sha256": seg.segment_sha256,
+                        "source_id": seg.source_id,
+                        "snapshot_id": seg.snapshot_id,
+                        "title": seg.title,
                     }
                 )
 
@@ -161,7 +257,11 @@ class SchemaManager:
                         s.metadata    = seg_data.metadata,
                         s.embedding   = seg_data.embedding,
                         s.public_url  = seg_data.public_url,
-                        s.type        = seg_data.type
+                        s.type        = seg_data.type,
+                        s.segment_sha256 = seg_data.segment_sha256,
+                        s.source_id = seg_data.source_id,
+                        s.snapshot_id = seg_data.snapshot_id,
+                        s.title = seg_data.title
                     WITH s, seg_data
                     MATCH (d:Document {id:seg_data.doc_id})
                     MERGE (d)-[:CONTAINS]->(s)

@@ -1,10 +1,42 @@
+import hashlib
 import json
 import logging
+from typing import Any
 
 from model import DocumentSegment
 from util.errors import NoSuchDocumentError
 
 logger = logging.getLogger(__name__)
+PARSER_VERSION = "json-website-parser@2"
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def load_json_metadata(path: str) -> dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(data, dict) or data.get("schema_version") != 2:
+        return {}
+
+    return {
+        "id": data.get("document_id"),
+        "source_id": data.get("source_id"),
+        "party_id": data.get("party_id"),
+        "source_type": data.get("source_type"),
+        "election_year": data.get("election_year"),
+        "public_url": data.get("public_url"),
+        "snapshot_id": data.get("snapshot_id"),
+        "raw_sha256": data.get("raw_sha256"),
+        "canonical_text_sha256": data.get("canonical_text_sha256"),
+        "captured_at": data.get("captured_at"),
+        "parser_version": PARSER_VERSION,
+    }
 
 
 def parse_json(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]:
@@ -22,8 +54,13 @@ def parse_json(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]
     except json.JSONDecodeError as e:
         raise ValueError(f"Error decoding JSON from file: {path} - {e}") from e
 
+    if isinstance(data, dict) and data.get("schema_version") == 2:
+        return _parse_schema_v2(data, document_id, path)
+
     if not isinstance(data, list):
-        raise ValueError(f"JSON data in {path} is not a list as expected.")
+        raise ValueError(
+            f"JSON data in {path} is neither a legacy list nor schema_version=2."
+        )
 
     raw_parts = []
     segments: list[DocumentSegment] = []
@@ -67,3 +104,67 @@ def parse_json(path: str, document_id: str) -> tuple[str, list[DocumentSegment]]
     raw_content = "\\n\\n".join(raw_parts)
 
     return raw_content, segments
+
+
+def _parse_schema_v2(
+    data: dict[str, Any], document_id: str, path: str
+) -> tuple[str, list[DocumentSegment]]:
+    items = data.get("items", [])
+    if not isinstance(items, list):
+        raise ValueError(f"JSON data in {path} has invalid 'items' field.")
+
+    source_id = data.get("source_id")
+    snapshot_id = data.get("snapshot_id")
+    document_public_url = data.get("public_url")
+    raw_sha256 = data.get("raw_sha256")
+
+    raw_parts = []
+    segments: list[DocumentSegment] = []
+    current_char_offset = 0
+
+    for i, item in enumerate(items):
+        if not isinstance(item, dict) or "content" not in item or "url" not in item:
+            logger.warning(f"Skipping invalid item at index {i} in {path}: {item}")
+            continue
+
+        content = item.get("content", "")
+        url = item.get("url", document_public_url or "")
+        title = item.get("title")
+        item_id = item.get("item_id") or f"item_{i + 1}"
+        segment_hash = item.get("content_sha256") or _sha256_text(content)
+
+        if not content.strip():
+            continue
+
+        raw_parts.append(content)
+        start_index = current_char_offset
+        end_index = current_char_offset + len(content)
+
+        segments.append(
+            DocumentSegment(
+                id=f"{document_id}-{item_id}",
+                text=content,
+                start_index=start_index,
+                end_index=end_index,
+                page=i + 1,
+                metadata={
+                    "url": url,
+                    "title": title,
+                    "source_id": source_id,
+                    "snapshot_id": item.get("snapshot_id") or snapshot_id,
+                    "raw_sha256": item.get("raw_sha256") or raw_sha256,
+                    "content_sha256": segment_hash,
+                },
+                type="website",
+                public_url=url,
+                segment_sha256=segment_hash,
+                source_id=source_id,
+                snapshot_id=item.get("snapshot_id") or snapshot_id,
+                title=title,
+            )
+        )
+        current_char_offset += len(content)
+        if i < len(items) - 1:
+            current_char_offset += 2
+
+    return "\n\n".join(raw_parts), segments

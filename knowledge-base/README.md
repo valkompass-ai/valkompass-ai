@@ -41,6 +41,8 @@ From the project root directory:
 
 ```bash
 make test-kb              # Run all tests
+make validate-source-registry # Validate configured party source registry
+make crawl-party-sources  # Crawl configured party website sources
 make parse-kb-docs        # Parse PDF/JSON documents  
 make embed-kb-docs        # Generate embeddings
 make topic-model-kb-docs  # Run topic modeling
@@ -53,10 +55,24 @@ make process-kb-docs      # Complete pipeline (parse → embed → topic → gra
 
 The system processes political documents through a pipeline:
 
-1. **Document Parsing** (`parser/`) - Extract text from PDFs and JSON files
-2. **Embedding Generation** (`analysis/embedding.py`) - Create vector embeddings using OpenAI
-3. **Topic Modeling** (`analysis/topic_modeling.py`) - Cluster content using BERTopic
-4. **Graph Storage** (`graph/`) - Store in Neo4j with vector search capabilities
+1. **Source Ingestion** (`sources/`) - Crawl configured official party sources into committed manifests, run reports, and structured web JSON
+2. **Document Parsing** (`parser/`) - Extract text from PDFs and JSON files
+3. **Embedding Generation** (`analysis/embedding.py`) - Create vector embeddings using OpenAI
+4. **Topic Modeling** (`analysis/topic_modeling.py`) - Cluster content using BERTopic
+5. **Graph Storage** (`graph/`) - Store in Neo4j with vector search capabilities
+
+## Source Ingestion
+
+Configured party website sources live in `source-registry.json`. The crawler writes SHA-256 hashes, run reports, and a manifest under `source-snapshots/`, then writes parser-compatible JSON under `documents/{party}/web/`. Raw fetched bytes are a local cache under `source-snapshots/raw/` and are intentionally ignored; the committed manifest keeps the hash, byte size, URL, timestamp, and local cache path needed to verify or reproduce a fetch.
+
+```bash
+cd knowledge-base
+uv run python -m sources.cli validate-registry
+uv run python -m sources.cli crawl --party S
+uv run python -m sources.cli crawl --all
+```
+
+The crawler is registry-bound: it only follows configured hosts and path prefixes, stores source IDs, capture timestamps, raw byte hashes, and canonical text hashes for traceability.
 
 ## Testing
 

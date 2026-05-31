@@ -40,6 +40,10 @@ class DocumentSegment(BaseModel):
     topic_id: int | None = None
     type: str | None = None
     public_url: str | None = None
+    segment_sha256: str | None = None
+    source_id: str | None = None
+    snapshot_id: str | None = None
+    title: str | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -79,3 +83,13 @@ class Document(BaseModel):
     path: str
     raw_content: str
     segments: list[DocumentSegment]
+    source_id: str | None = None
+    party_id: str | None = None
+    source_type: str | None = None
+    election_year: int | None = None
+    public_url: str | None = None
+    snapshot_id: str | None = None
+    raw_sha256: str | None = None
+    canonical_text_sha256: str | None = None
+    captured_at: str | None = None
+    parser_version: str | None = None

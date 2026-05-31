@@ -109,7 +109,7 @@ def extract_topics(
         token_pattern=None,  # disable default pattern so tokenizer is used
         ngram_range=(1, 2),
         max_df=0.90,
-        min_df=0.05,
+        min_df=1,
         max_features=2_000,
     )
 

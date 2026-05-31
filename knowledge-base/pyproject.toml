@@ -30,7 +30,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["analysis", "documents", "graph", "model", "parser", "util", "tests"]
+packages = ["analysis", "documents", "graph", "model", "parser", "sources", "util", "tests"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
