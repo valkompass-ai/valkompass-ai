@@ -56,6 +56,12 @@ export interface AgentApproach {
   config?: MultiStepAgentConfig;
 }
 
+export interface ChatStreamCallbacks {
+  onReasoningDelta?: (text: string) => void | Promise<void>;
+  onReasoningComplete?: () => void | Promise<void>;
+  onAnswerDelta?: (text: string) => void | Promise<void>;
+}
+
 const formatContextForPrompt = (context: RetrievedContext, isMultiStep: boolean = false): string => {
   let formattedContext = `Relevant Topic: ${context.topicName}\nDescription: ${context.topicDescription}\n\n`;
   
@@ -77,6 +83,67 @@ const formatContextForPrompt = (context: RetrievedContext, isMultiStep: boolean 
   return formattedContext;
 };
 
+const buildPrompt = (
+  message: Message,
+  retrievedContext: RetrievedContext | null,
+  agentApproach: AgentApproach
+): {
+  fullPrompt: string;
+  systemInstruction: string;
+} => {
+  let promptForGemini = "";
+  let systemInstruction = SYSTEM_INSTRUCTION;
+
+  const historyContext = message.history && message.history.trim()
+    ? `\nRecent Chat History:\n${message.history}\n\n`
+    : '';
+
+  if (retrievedContext && (retrievedContext.segments.length > 0 || retrievedContext.topicName)) {
+    const formattedContext = formatContextForPrompt(retrievedContext, agentApproach.type === 'multi-step');
+    promptForGemini = `Context:\n${formattedContext}${historyContext}User Question: ${message.text}\n\nAnswer:`;
+  } else {
+    promptForGemini = historyContext + message.text;
+    systemInstruction = SYSTEM_INSTRUCTION_NO_CONTEXT;
+  }
+
+  return {
+    fullPrompt: systemInstruction + "\n\n" + promptForGemini,
+    systemInstruction,
+  };
+};
+
+const getRetrievedContext = async (
+  message: Message,
+  distinctId: string | undefined,
+  agentApproach: AgentApproach
+): Promise<{
+  retrievedContext: RetrievedContext | null;
+  multiStepResult: MultiStepRetrievalResult | null;
+}> => {
+  if (agentApproach.type === 'multi-step') {
+    const multiStepResult = await getMultiStepContext(message, distinctId, agentApproach.config, queryModel);
+    return {
+      retrievedContext: multiStepResult.aggregatedContext,
+      multiStepResult,
+    };
+  }
+
+  const queryEmbedding = await getOpenAIEmbedding(message.text, message.id, distinctId);
+  return {
+    retrievedContext: await getContextFromKB(queryEmbedding, message.id, distinctId),
+    multiStepResult: null,
+  };
+};
+
+const updateChatHistory = (userText: string, aiText: string) => {
+  chatHistory.push({ role: "user", parts: [{ text: userText }] });
+  chatHistory.push({ role: "model", parts: [{ text: aiText }] });
+
+  if (chatHistory.length > 10) {
+    chatHistory.splice(0, chatHistory.length - 10);
+  }
+};
+
 export const getGeminiChatResponse = async (
   message: Message, 
   distinctId?: string,
@@ -90,34 +157,11 @@ export const getGeminiChatResponse = async (
   let errorMessage = "";
   
   try {
-    // Step 1: Retrieve context using appropriate agent approach
-    if (agentApproach.type === 'multi-step') {
-      multiStepResult = await getMultiStepContext(message, distinctId, agentApproach.config, queryModel);
-      retrievedContext = multiStepResult.aggregatedContext;
-    } else {
-      // Single-step approach: direct embedding + knowledge base query
-      const queryEmbedding = await getOpenAIEmbedding(message.text, message.id, distinctId);
-      retrievedContext = await getContextFromKB(queryEmbedding, message.id, distinctId);
-    }
+    const contextResult = await getRetrievedContext(message, distinctId, agentApproach);
+    retrievedContext = contextResult.retrievedContext;
+    multiStepResult = contextResult.multiStepResult;
     
-    // Step 2: Prepare prompt with context and history
-    let promptForGemini = "";
-    let systemInstruction = SYSTEM_INSTRUCTION;
-    
-    const historyContext = message.history && message.history.trim() 
-      ? `\nRecent Chat History:\n${message.history}\n\n` 
-      : '';
-    
-    if (retrievedContext && (retrievedContext.segments.length > 0 || retrievedContext.topicName)) {
-      const formattedContext = formatContextForPrompt(retrievedContext, agentApproach.type === 'multi-step');
-      promptForGemini = `Context:\n${formattedContext}${historyContext}User Question: ${message.text}\n\nAnswer:`;
-    } else {
-      // Fallback if no context is found
-      promptForGemini = historyContext + message.text;
-      systemInstruction = SYSTEM_INSTRUCTION_NO_CONTEXT;
-    }
-
-    const fullPrompt = systemInstruction + "\n\n" + promptForGemini;
+    const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
     const estimatedInputTokens = estimateTokens(fullPrompt);
     
     // Step 3: Generate response with Gemini (with retry logic)
@@ -179,13 +223,7 @@ export const getGeminiChatResponse = async (
       });
     }
 
-    // Update chat history
-    chatHistory.push({ role: "user", parts: [{ text: message.text }] });
-    chatHistory.push({ role: "model", parts: [{ text }] });
-
-    if (chatHistory.length > 10) {
-      chatHistory.splice(0, chatHistory.length - 10);
-    }
+    updateChatHistory(message.text, text);
 
     aiResponse = text;
     return text;
@@ -257,6 +295,164 @@ export const getGeminiChatResponse = async (
         avgSimilarityScore: retrievedContext?.avgSimilarityScore,
         
         // Multi-step metrics
+        ...(multiStepResult && {
+          multiStepMetrics: multiStepResult.metrics,
+          agentApproach: agentApproach.type,
+        }),
+      });
+    }
+  }
+};
+
+export const getGeminiChatResponseStream = async (
+  message: Message,
+  distinctId?: string,
+  agentApproach: AgentApproach = { type: 'single' },
+  callbacks: ChatStreamCallbacks = {}
+): Promise<string> => {
+  const overallStartTime = Date.now();
+  let retrievedContext: RetrievedContext | null = null;
+  let multiStepResult: MultiStepRetrievalResult | null = null;
+  let aiResponse = "";
+  let success = true;
+  let errorMessage = "";
+
+  const emitReasoning = async (text: string) => {
+    await callbacks.onReasoningDelta?.(text);
+  };
+
+  try {
+    await emitReasoning("Jag läser frågan och väljer hur jag ska söka i källorna.\n");
+
+    if (agentApproach.type === 'multi-step') {
+      await emitReasoning("Jag använder flera riktade sökningar för att fånga relevanta partiståndpunkter.\n");
+    } else {
+      await emitReasoning("Jag gör en fokuserad sökning mot kunskapsbasen.\n");
+    }
+
+    const contextResult = await getRetrievedContext(message, distinctId, agentApproach);
+    retrievedContext = contextResult.retrievedContext;
+    multiStepResult = contextResult.multiStepResult;
+
+    const segmentCount = retrievedContext?.segments.length ?? 0;
+    const documentCount = retrievedContext?.documentsReferenced?.length ?? 0;
+
+    if (segmentCount > 0) {
+      await emitReasoning(`Jag hittade ${segmentCount} relevanta källavsnitt från ${documentCount} dokument.\n`);
+    } else {
+      await emitReasoning("Jag hittade inget tydligt källunderlag och kommer att vara försiktig i svaret.\n");
+    }
+
+    await emitReasoning("Jag formulerar svaret med källmaterialet som grund.\n");
+    await callbacks.onReasoningComplete?.();
+
+    const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
+    const estimatedInputTokens = estimateTokens(fullPrompt);
+    const geminiStartTime = Date.now();
+
+    const chat = model.startChat({
+      generationConfig,
+      history: [...chatHistory],
+    });
+
+    const result = await chat.sendMessageStream(fullPrompt);
+
+    for await (const chunk of result.stream) {
+      const delta = chunk.text();
+      if (!delta) {
+        continue;
+      }
+
+      aiResponse += delta;
+      await callbacks.onAnswerDelta?.(delta);
+    }
+
+    if (!aiResponse) {
+      const response = await result.response;
+      aiResponse = response.text();
+      await callbacks.onAnswerDelta?.(aiResponse);
+    }
+
+    const geminiDuration = Date.now() - geminiStartTime;
+    const estimatedOutputTokens = estimateTokens(aiResponse);
+    const estimatedTotalTokens = estimatedInputTokens + estimatedOutputTokens;
+    const estimatedCost = calculateLLMCost(LLM_MODEL_KEY, estimatedInputTokens, estimatedOutputTokens);
+
+    if (distinctId) {
+      await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion_stream', {
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        totalTokens: estimatedTotalTokens,
+        duration: geminiDuration,
+        cost: estimatedCost,
+        success: true,
+        temperature: generationConfig.temperature,
+        maxTokens: generationConfig.maxOutputTokens,
+        messageId: message.id,
+      });
+    }
+
+    updateChatHistory(message.text, aiResponse);
+    return aiResponse;
+  } catch (error) {
+    success = false;
+    errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    if (distinctId) {
+      await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion_stream', {
+        duration: Date.now() - overallStartTime,
+        success: false,
+        errorMessage,
+        temperature: generationConfig.temperature,
+        maxTokens: generationConfig.maxOutputTokens,
+        messageId: message.id,
+      });
+    }
+
+    if (error instanceof Error) {
+      if (error.message.includes("OPENAI_API_KEY")) {
+        aiResponse = "OpenAI API key is not configured correctly. Please check server logs.";
+      } else if (error.message.includes("Neo4j")) {
+        aiResponse = "Could not connect to the knowledge base. Please check server logs.";
+      } else if (error.message.includes("overloaded") || error.message.includes("503")) {
+        aiResponse = "The AI service is currently overloaded. Please try again in a moment.";
+      } else {
+        aiResponse = "Sorry, I encountered an error trying to answer your question. Please try again later.";
+      }
+    } else {
+      aiResponse = "Sorry, I encountered an unexpected error. Please try again later.";
+    }
+
+    await callbacks.onReasoningComplete?.();
+    await callbacks.onAnswerDelta?.(aiResponse);
+    return aiResponse;
+  } finally {
+    if (distinctId) {
+      const totalDuration = Date.now() - overallStartTime;
+
+      await trackChatInteraction(distinctId, {
+        messageId: message.id,
+        userMessage: message.text,
+        aiResponse,
+        messageLength: message.text.length,
+        responseLength: aiResponse.length,
+        duration: totalDuration,
+        success,
+        errorMessage: success ? undefined : errorMessage,
+        topicName: retrievedContext?.topicName,
+        topicDescription: retrievedContext?.topicDescription,
+        documentsReferenced: retrievedContext?.documentsReferenced,
+        segmentsUsed: retrievedContext?.segments.map(seg => ({
+          documentPath: seg.documentPath,
+          text: seg.segmentText,
+          page: seg.segmentPage,
+          similarityScore: seg.similarityScore,
+          partyAbbreviation: seg.partyAbbreviation,
+        })),
+        retrievalSuccess: retrievedContext !== null,
+        retrievalDuration: retrievedContext?.retrievalDuration,
+        numSegmentsRetrieved: retrievedContext?.totalSegmentsFound,
+        avgSimilarityScore: retrievedContext?.avgSimilarityScore,
         ...(multiStepResult && {
           multiStepMetrics: multiStepResult.metrics,
           agentApproach: agentApproach.type,

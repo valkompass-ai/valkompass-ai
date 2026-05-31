@@ -9,7 +9,7 @@ import Image from "next/image";
 import { useEffect, useRef } from "react";
 
 export default function ChatArea() {
-  const { messages, sendMessage, clearMessages, isLoading, error } = useChat();
+  const { messages, sendMessage, clearMessages, isLoading, error, streamingState } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +44,7 @@ export default function ChatArea() {
               {messages.map((msg) => (
                 <MessageBubble key={msg.id} message={msg.text} role={msg.role} />
               ))}
-              {isLoading && <MessageBubbleLoading />}
+              {isLoading && <MessageBubbleLoading stream={streamingState} />}
               {error && (
                 <MessageBubble key="error" message={`Error: ${error}`} role="ai" />
               )}

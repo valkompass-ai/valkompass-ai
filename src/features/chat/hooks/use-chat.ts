@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Message } from '@/types';
-import { sendMessageToApi } from '../api/chat-api';
+import { streamMessageFromApi } from '../api/chat-api';
 import { v7 as uuidv7 } from 'uuid';
 
 /**
@@ -45,10 +45,17 @@ const formatChatHistory = (messages: Message[], maxLength: number = 5000): strin
   return truncationIndicator + truncated;
 };
 
+export interface StreamingChatState {
+  reasoning: string;
+  reasoningCollapsed: boolean;
+  answer: string;
+}
+
 export const useChat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [streamingState, setStreamingState] = useState<StreamingChatState | null>(null);
 
   const sendMessage = async (messageText: string) => {
     // Format current chat history for this message
@@ -65,9 +72,35 @@ export const useChat = () => {
     setMessages((prevMessages) => [...prevMessages, newUserMessage]);
     setIsLoading(true);
     setError(null);
+    setStreamingState({
+      reasoning: '',
+      reasoningCollapsed: false,
+      answer: '',
+    });
 
     try {
-      const aiMessage = await sendMessageToApi(newUserMessage);
+      const aiMessage = await streamMessageFromApi(newUserMessage, {
+        onReasoningDelta: (text) => {
+          setStreamingState((current) => ({
+            reasoning: (current?.reasoning ?? '') + text,
+            reasoningCollapsed: current?.reasoningCollapsed ?? false,
+            answer: current?.answer ?? '',
+          }));
+        },
+        onReasoningComplete: () => {
+          setStreamingState((current) => current
+            ? { ...current, reasoningCollapsed: true }
+            : current
+          );
+        },
+        onAnswerDelta: (text) => {
+          setStreamingState((current) => ({
+            reasoning: current?.reasoning ?? '',
+            reasoningCollapsed: true,
+            answer: (current?.answer ?? '') + text,
+          }));
+        },
+      });
       setMessages((prevMessages) => [...prevMessages, aiMessage]);
     } catch (e) {
       const err = e as Error;
@@ -82,18 +115,21 @@ export const useChat = () => {
       setMessages((prevMessages) => [...prevMessages, errorMessage]);
     } finally {
       setIsLoading(false);
+      setStreamingState(null);
     }
   };
 
   const clearMessages = () => {
     setMessages([]);
     setError(null);
+    setStreamingState(null);
   };
 
   return {
     messages,
     isLoading,
     error,
+    streamingState,
     sendMessage,
     clearMessages,
   };
