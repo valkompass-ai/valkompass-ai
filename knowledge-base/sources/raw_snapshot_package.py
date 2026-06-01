@@ -271,6 +271,59 @@ def verify_package_matches_source_manifest(
         )
 
 
+def verify_archive_members(package_manifest: dict, archive_path: Path) -> None:
+    expected_files = {
+        file["raw_path"]: (file["raw_sha256"], file["raw_bytes"])
+        for file in package_manifest.get("files", [])
+    }
+    seen_files: dict[str, tuple[str, int]] = {}
+    duplicate_members: list[str] = []
+
+    with tarfile.open(archive_path, mode="r:gz") as tar:
+        for member in tar.getmembers():
+            assert_safe_member(member)
+            if member.isdir():
+                continue
+            if member.name in seen_files:
+                duplicate_members.append(member.name)
+                continue
+
+            member_file = tar.extractfile(member)
+            if member_file is None:
+                raise ValueError(f"Could not read archive member: {member.name}")
+
+            digest = hashlib.sha256()
+            byte_count = 0
+            while chunk := member_file.read(1024 * 1024):
+                digest.update(chunk)
+                byte_count += len(chunk)
+            seen_files[member.name] = (digest.hexdigest(), byte_count)
+
+    expected_paths = set(expected_files)
+    seen_paths = set(seen_files)
+    mismatches: list[str] = []
+    if duplicate_members:
+        mismatches.append(f"duplicate_members={duplicate_members[:5]}")
+    if expected_paths != seen_paths:
+        missing = sorted(expected_paths - seen_paths)
+        extra = sorted(seen_paths - expected_paths)
+        mismatches.append(f"missing={missing[:5]} extra={extra[:5]}")
+
+    bad_members = sorted(
+        path
+        for path in expected_paths & seen_paths
+        if expected_files[path] != seen_files[path]
+    )
+    if bad_members:
+        mismatches.append(f"bad_hash_or_size={bad_members[:5]}")
+
+    if mismatches:
+        raise ValueError(
+            "Archive members do not match package manifest: "
+            f"{'; '.join(mismatches)}"
+        )
+
+
 def assert_safe_member(member: tarfile.TarInfo) -> None:
     name = member.name
     if member.isdir():
@@ -313,6 +366,7 @@ def verify_raw_snapshots(args: argparse.Namespace) -> None:
     verify_sha256_sidecar(sha256_path, archive_path)
 
     verify_package_matches_source_manifest(package_manifest, source_manifest_path)
+    verify_archive_members(package_manifest, archive_path)
 
     require_unpacked_raw = getattr(args, "require_unpacked_raw", False)
     missing_files: list[str] = []
