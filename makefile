@@ -18,7 +18,7 @@ verify-source-snapshots-package:
 	cd knowledge-base && uv run python -m sources.raw_snapshot_package verify
 
 parse-kb-docs:
-	cd knowledge-base && uv run python main.py --actions parse
+	cd knowledge-base && uv run python main.py --actions verify-sources parse
 
 embed-kb-docs:
 	cd knowledge-base && uv run python main.py --actions embed
@@ -27,11 +27,11 @@ topic-model-kb-docs:
 	cd knowledge-base && uv run python main.py --actions topicmodel
 
 graph-kb-docs:
-	cd knowledge-base && uv run python main.py --actions graph
+	cd knowledge-base && uv run python main.py --actions verify-sources graph
 
 graph-kb-clear:
 	cd knowledge-base && uv run python main.py --actions graph-clear
 
 # Default action is parse then embed
 process-kb-docs:
-	cd knowledge-base && uv run python main.py --actions parse embed topicmodel graph
+	cd knowledge-base && uv run python main.py --actions verify-sources parse embed topicmodel graph

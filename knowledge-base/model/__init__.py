@@ -83,9 +83,11 @@ class Document(BaseModel):
     path: str
     raw_content: str
     segments: list[DocumentSegment]
+    title: str | None = None
     source_id: str | None = None
     party_id: str | None = None
     source_type: str | None = None
+    document_type: str | None = None
     election_year: int | None = None
     public_url: str | None = None
     snapshot_id: str | None = None
@@ -93,3 +95,8 @@ class Document(BaseModel):
     canonical_text_sha256: str | None = None
     captured_at: str | None = None
     parser_version: str | None = None
+    source_page_url: str | None = None
+    download_url: str | None = None
+    final_url: str | None = None
+    content_type: str | None = None
+    byte_size: int | None = None

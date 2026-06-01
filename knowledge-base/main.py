@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import os
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,6 +29,8 @@ from model.store import (
     store_topics_as_json,
 )
 from parser import parse_document
+from parser.source_metadata import stable_document_id_for_path
+from sources.raw_snapshot_package import verify_raw_snapshots
 from util.errors import NoSuchDocumentError
 
 load_dotenv()
@@ -39,6 +42,40 @@ STRUCTURED_KB_OUTPUT_DIR = Path(__file__).parent / "structured-knowledge-base"
 STRUCTURED_DOCS_OUTPUT_DIR = (
     Path(__file__).parent / "structured-knowledge-base" / "documents"
 )
+SOURCE_SNAPSHOTS_DIR = Path(__file__).parent / "source-snapshots"
+SOURCE_REGISTRY_PATH = Path(__file__).parent / "source-registry.json"
+SOURCE_SNAPSHOT_MANIFEST_PATH = SOURCE_SNAPSHOTS_DIR / "manifest.json"
+RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH = (
+    SOURCE_SNAPSHOTS_DIR / "raw-snapshots-package.json"
+)
+PDF_SOURCE_DOCUMENTS_MANIFEST_PATH = Path(__file__).parent / (
+    "source-documents-manifest.json"
+)
+
+
+def clean_structured_documents_dir(output_dir: Path) -> None:
+    """Remove generated structured document JSON before a fresh parse."""
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
+def verify_source_snapshot_package_available() -> None:
+    """Verify raw snapshot package/hash when the package metadata is present."""
+    package_archive = SOURCE_SNAPSHOTS_DIR / "raw-snapshots.tar.gz"
+    if not package_archive.exists() or not RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH.exists():
+        logger.warning(
+            "Raw source snapshot package is not present; skipping package verification."
+        )
+        return
+
+    args = argparse.Namespace(
+        archive=str(package_archive),
+        package_manifest=str(RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH),
+        source_manifest=str(SOURCE_SNAPSHOT_MANIFEST_PATH),
+        sha256=str(SOURCE_SNAPSHOTS_DIR / "raw-snapshots.tar.gz.sha256"),
+    )
+    verify_raw_snapshots(args)
 
 
 def process_party_entities(schema_manager: SchemaManager) -> None:
@@ -65,6 +102,7 @@ def process_party_entities(schema_manager: SchemaManager) -> None:
     logger.info(f"Created {len(parties)} party nodes")
 
     # Create relationships between parties and documents
+    schema_manager.link_sources_to_parties()
     schema_manager.link_documents_to_parties()
     logger.info("Linked parties to their authored documents")
 
@@ -94,9 +132,14 @@ def load_and_parse_documents(
     for ext in supported_extensions:
         doc_paths_abs.extend(list(documents_dir_abs.rglob(ext)))
 
-    # Remove everything in /voting/ for now
+    # Remove generated voting data and the legacy website-policy dump format.
+    # Current website policy sources live under documents/{party}/web/ and carry
+    # source-registry snapshot metadata.
     doc_paths_abs = [
-        path for path in doc_paths_abs if "voting" not in str(path).lower()
+        path
+        for path in doc_paths_abs
+        if "voting" not in str(path).lower()
+        and "web-page-policies" not in str(path).lower()
     ]
 
     if not doc_paths_abs:
@@ -108,12 +151,13 @@ def load_and_parse_documents(
     parsed_documents: list[Document] = []
     print(f"Found {len(doc_paths_abs)} documents. Starting parsing...")
 
-    for i, doc_path_abs in enumerate(
-        tqdm(doc_paths_abs, desc="Parsing documents", unit="doc")
-    ):
+    for doc_path_abs in tqdm(doc_paths_abs, desc="Parsing documents", unit="doc"):
         try:
-            # Parse document using its absolute path for reading
-            document_obj = parse_document(str(doc_path_abs), str(i))
+            # Parse document using a stable path-derived ID so structured JSON and
+            # graph nodes remain stable across re-runs.
+            document_obj = parse_document(
+                str(doc_path_abs), stable_document_id_for_path(doc_path_abs)
+            )
 
             relative_path = doc_path_abs.relative_to(project_root)
             document_obj.path = str(
@@ -138,7 +182,14 @@ async def main():
     parser.add_argument(
         "--actions",
         nargs="+",
-        choices=["parse", "embed", "topicmodel", "graph", "graph-clear"],
+        choices=[
+            "verify-sources",
+            "parse",
+            "embed",
+            "topicmodel",
+            "graph",
+            "graph-clear",
+        ],
         default=["parse", "embed", "topicmodel", "graph"],
         help="Specify a list of actions: parse, embed, topicmodel, graph. Default is parse then embed.",
     )
@@ -154,6 +205,11 @@ async def main():
         default=str(STRUCTURED_DOCS_OUTPUT_DIR),
         help=f"Directory to store/load structured JSON documents. Default: {STRUCTURED_DOCS_OUTPUT_DIR}",
     )
+    parser.add_argument(
+        "--no-clean-structured-output",
+        action="store_true",
+        help="Do not remove existing structured document JSON before parsing.",
+    )
     # Add more arguments as needed, e.g., for embedding model selection
 
     args = parser.parse_args()
@@ -166,8 +222,15 @@ async def main():
     docs_dir_abs = Path(args.docs_dir)
     structured_output_dir = Path(args.structured_output_dir)
 
+    if "verify-sources" in args.actions:
+        verify_source_snapshot_package_available()
+        processed_something = True
+
     if "parse" in args.actions:
         print(f"Starting document parsing from: {docs_dir_abs}...")
+        if not args.no_clean_structured_output:
+            print(f"Cleaning structured documents in {structured_output_dir}...")
+            clean_structured_documents_dir(structured_output_dir)
         documents = load_and_parse_documents(
             documents_dir_abs=docs_dir_abs, project_root=PROJECT_ROOT_DIR
         )
@@ -275,6 +338,13 @@ async def main():
         schema_manager.clear_database()
         schema_manager.apply_schema()
         print("Schema applied successfully.")
+
+        print("Upserting source provenance manifests...")
+        schema_manager.upsert_source_registry(SOURCE_REGISTRY_PATH)
+        schema_manager.upsert_source_snapshots(SOURCE_SNAPSHOT_MANIFEST_PATH)
+        schema_manager.upsert_raw_snapshot_package(RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH)
+        schema_manager.upsert_pdf_source_documents(PDF_SOURCE_DOCUMENTS_MANIFEST_PATH)
+        print("Source provenance manifests upserted successfully.")
 
         print("Upserting topics...")
         for topic in tqdm(topics, desc="Upserting topics", unit="topic"):

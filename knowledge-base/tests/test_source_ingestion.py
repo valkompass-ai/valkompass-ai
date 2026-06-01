@@ -127,5 +127,44 @@ def test_schema_v2_website_json_parses_with_provenance(tmp_path):
     assert parsed.party_id == "S"
     assert parsed.source_id == "s-politik-a-till-o"
     assert parsed.canonical_text_sha256 == "text_hash"
+    assert parsed.segments[0].id == "doc_sha256_test-1-url_sha256_abc-1"
     assert parsed.segments[0].segment_sha256 == "content_hash"
     assert parsed.segments[0].snapshot_id == "snap_sha256_test"
+
+
+def test_schema_v2_website_json_segment_ids_survive_duplicate_item_ids(tmp_path):
+    document_path = tmp_path / "source.json"
+    duplicate_item = {
+        "item_id": "url_sha256_duplicate",
+        "url": "https://example.test/politik/personlig-assistans",
+        "title": "Personlig assistans",
+        "content": "Assistanspolitik med tillrackligt innehall for ett segment.",
+        "content_sha256": "content_hash",
+        "snapshot_id": "snap_sha256_test",
+        "raw_sha256": "raw_hash",
+    }
+    document = {
+        "schema_version": 2,
+        "document_id": "doc_sha256_test",
+        "party_id": "L",
+        "source_id": "l-politik-a-o",
+        "source_type": "website_policy_index",
+        "election_year": 2026,
+        "public_url": "https://example.test/politik",
+        "snapshot_id": "snap_sha256_test",
+        "raw_sha256": "raw_hash",
+        "canonical_text_sha256": "text_hash",
+        "captured_at": "2026-05-31T12:00:00+00:00",
+        "items": [duplicate_item, duplicate_item],
+    }
+    document_path.write_text(json.dumps(document), encoding="utf-8")
+
+    parsed = parse_document(str(document_path), "fallback")
+    segment_ids = [segment.id for segment in parsed.segments]
+
+    assert len(segment_ids) == 2
+    assert len(set(segment_ids)) == 2
+    assert segment_ids == [
+        "doc_sha256_test-1-url_sha256_duplicate-1",
+        "doc_sha256_test-2-url_sha256_duplicate-1",
+    ]
