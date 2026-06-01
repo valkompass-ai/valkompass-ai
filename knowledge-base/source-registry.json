@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "default_user_agent": "valkompass-ai-sourcebot/0.1 (+https://valkompass.ai)",
+  "default_rate_limit": {
+    "requests_per_second": 5.0,
+    "max_concurrency_per_host": 1
+  },
+  "parties": [
+    {
+      "party_id": "S",
+      "name": "Socialdemokraterna",
+      "document_folder": "socialdemokraterna",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "s-politik-a-till-o",
+          "source_type": "website_policy_index",
+          "base_url": "https://www.socialdemokraterna.se/",
+          "seed_urls": [
+            "https://www.socialdemokraterna.se/var-politik/a-till-o"
+          ],
+          "discovery": ["links"],
+          "allow_paths": ["/var-politik/a-till-o"],
+          "deny_paths": ["/press/", "/nyheter/", "/kalender/", "/distrikt/", "/var-politik/stall-en-fraga"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 160
+        }
+      ]
+    },
+    {
+      "party_id": "M",
+      "name": "Moderaterna",
+      "document_folder": "moderaterna",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "m-var-politik",
+          "source_type": "website_policy_index",
+          "base_url": "https://moderaterna.se/",
+          "seed_urls": ["https://moderaterna.se/var-politik/"],
+          "discovery": ["links"],
+          "allow_paths": ["/var-politik/"],
+          "deny_paths": ["/nyheter/", "/press/", "/kalender/", "/distrikt/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 250
+        }
+      ]
+    },
+    {
+      "party_id": "SD",
+      "name": "Sverigedemokraterna",
+      "document_folder": "sverigedemokraterna",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "sd-vad-vi-vill",
+          "source_type": "website_policy_index",
+          "base_url": "https://www.sd.se/",
+          "seed_urls": ["https://www.sd.se/vad-vi-vill/"],
+          "discovery": ["links"],
+          "allow_paths": ["/vad-vi-vill/"],
+          "deny_paths": ["/nyheter/", "/press/", "/evenemang/", "/lokalt/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 250
+        }
+      ]
+    },
+    {
+      "party_id": "MP",
+      "name": "Miljopartiet de grona",
+      "document_folder": "miljopartiet",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "mp-politik",
+          "source_type": "website_policy_index",
+          "base_url": "https://www.mp.se/",
+          "seed_urls": ["https://www.mp.se/politik/"],
+          "discovery": ["links"],
+          "allow_paths": ["/politik/"],
+          "deny_paths": ["/nyheter/", "/press/", "/kalender/", "/lokalt/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 200
+        }
+      ]
+    },
+    {
+      "party_id": "C",
+      "name": "Centerpartiet",
+      "document_folder": "centerpartiet",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "c-politik-a-o",
+          "source_type": "website_policy_index",
+          "base_url": "https://www.centerpartiet.se/",
+          "seed_urls": [
+            "https://www.centerpartiet.se/centerpartiets-politik/centerpartiets-politik-a-o"
+          ],
+          "discovery": ["links"],
+          "allow_paths": ["/centerpartiets-politik/"],
+          "deny_paths": ["/lokalt/", "/press/", "/nyheter/", "/kalender/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 200
+        }
+      ]
+    },
+    {
+      "party_id": "L",
+      "name": "Liberalerna",
+      "document_folder": "liberalerna",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "l-politik-a-o",
+          "source_type": "website_policy_index",
+          "base_url": "https://www.liberalerna.se/",
+          "seed_urls": ["https://www.liberalerna.se/politik-a-o"],
+          "discovery": ["links"],
+          "allow_paths": ["/politik-a-o", "/politik/"],
+          "deny_paths": ["/press/", "/nyheter/", "/kalender/", "/liberaler/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 200
+        }
+      ]
+    },
+    {
+      "party_id": "KD",
+      "name": "Kristdemokraterna",
+      "document_folder": "kristdemokraterna",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "kd-politik-a-o",
+          "source_type": "website_policy_index",
+          "base_url": "https://kristdemokraterna.se/",
+          "seed_urls": ["https://kristdemokraterna.se/var-politik/politik-a-till-o"],
+          "discovery": ["links"],
+          "allow_paths": ["/var-politik/politik-a-till-o"],
+          "deny_paths": ["/press/", "/nyheter/", "/kalender/", "/lokalt/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 250
+        }
+      ]
+    },
+    {
+      "party_id": "V",
+      "name": "Vansterpartiet",
+      "document_folder": "vansterpartiet",
+      "enabled": true,
+      "sources": [
+        {
+          "source_id": "v-politik-a-o",
+          "source_type": "website_policy_index",
+          "base_url": "https://www.vansterpartiet.se/",
+          "seed_urls": ["https://www.vansterpartiet.se/var-politik/politik-a-o/"],
+          "discovery": ["links"],
+          "allow_paths": ["/var-politik/"],
+          "deny_paths": ["/press/", "/nyheter/", "/kalender/", "/distrikt/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "core",
+          "max_pages": 200
+        },
+        {
+          "source_id": "v-partiprogram",
+          "source_type": "party_program",
+          "base_url": "https://www.vansterpartiet.se/",
+          "seed_urls": ["https://www.vansterpartiet.se/resursbank/partiprogram/"],
+          "discovery": ["links", "pdf_links"],
+          "allow_paths": ["/resursbank/partiprogram/"],
+          "deny_paths": ["/press/", "/nyheter/", "/kalender/", "/distrikt/"],
+          "include_media_types": ["text/html", "application/pdf"],
+          "election_year": 2026,
+          "priority": "supporting",
+          "max_pages": 20
+        }
+      ]
+    }
+  ]
+}

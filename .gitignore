@@ -51,3 +51,6 @@ knowledge-base/build
 public/kb-documents
 AI_IMPROVEMENTS.md
 .env.test
+
+# Local source crawl raw byte snapshots; manifests retain hashes/paths.
+knowledge-base/source-snapshots/raw/

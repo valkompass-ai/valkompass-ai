@@ -1,0 +1,17 @@
+{
+  "run_id": "20260531T183041Z",
+  "generated_at": "2026-05-31T18:30:41+00:00",
+  "registry_sha256": "14f1f9fc7230a98653f4c864160a40f96e4844f3c251efe9249ac681570b48e1",
+  "parties": [
+    "MP"
+  ],
+  "sources": [
+    "mp-politik"
+  ],
+  "fetched": 53,
+  "unchanged": 0,
+  "extracted_documents": 1,
+  "extracted_items": 53,
+  "skipped": [],
+  "failures": []
+}

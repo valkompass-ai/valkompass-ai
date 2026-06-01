@@ -12,7 +12,7 @@ from util.errors import NoSuchDocumentError
 # Adjust the path if your test execution context is different.
 # Assuming tests might be run from the project root directory.
 # Correcting path for when tests run from `knowledge-base` directory:
-TEST_PDF_PATH = "documents/socialdemokraterna/socialdemokraterna-valmanifest-2022.pdf"
+TEST_PDF_PATH = "documents/socialdemokraterna/pdf/socialdemokraterna-2025-partiprogram.pdf"
 NON_EXISTENT_PDF_PATH = "documents/non_existent_document.pdf"
 
 
@@ -100,6 +100,11 @@ def test_parse_pdf_basic_processing(sample_pdf_path):
             f"Segment {i} id attribute is not a string: {segment.id}"
         )
         assert len(segment.id) > 0, f"Segment {i} id attribute should not be empty"
+
+        assert segment.public_url == (
+            "/kb-documents/socialdemokraterna/pdf/"
+            "socialdemokraterna-2025-partiprogram.pdf"
+        )
 
 
 def test_parse_pdf_non_existent_file():

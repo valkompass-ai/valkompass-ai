@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from neo4j import GraphDatabase
 
@@ -10,19 +11,35 @@ SCHEMA = {
         # unique IDs on each label
         {
             "name": "topic_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Topic) REQUIRE n.id IS UNIQUE",
+            "cypher": "CONSTRAINT topic_id_unique IF NOT EXISTS FOR (n:Topic) REQUIRE n.id IS UNIQUE",
         },
         {
             "name": "document_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE",
+            "cypher": "CONSTRAINT document_id_unique IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE",
         },
         {
             "name": "segment_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:DocumentSegment) REQUIRE n.id IS UNIQUE",
+            "cypher": "CONSTRAINT segment_id_unique IF NOT EXISTS FOR (n:DocumentSegment) REQUIRE n.id IS UNIQUE",
         },
         {
             "name": "party_abbreviation_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Party) REQUIRE n.abbreviation IS UNIQUE",
+            "cypher": "CONSTRAINT party_abbreviation_unique IF NOT EXISTS FOR (n:Party) REQUIRE n.abbreviation IS UNIQUE",
+        },
+        {
+            "name": "source_id_unique",
+            "cypher": "CONSTRAINT source_id_unique IF NOT EXISTS FOR (n:Source) REQUIRE n.source_id IS UNIQUE",
+        },
+        {
+            "name": "source_snapshot_id_unique",
+            "cypher": "CONSTRAINT source_snapshot_id_unique IF NOT EXISTS FOR (n:SourceSnapshot) REQUIRE n.snapshot_id IS UNIQUE",
+        },
+        {
+            "name": "source_document_path_unique",
+            "cypher": "CONSTRAINT source_document_path_unique IF NOT EXISTS FOR (n:SourceDocument) REQUIRE n.path IS UNIQUE",
+        },
+        {
+            "name": "raw_snapshot_package_sha_unique",
+            "cypher": "CONSTRAINT raw_snapshot_package_sha_unique IF NOT EXISTS FOR (n:RawSnapshotPackage) REQUIRE n.archive_sha256 IS UNIQUE",
         },
     ],
     "indexes": [
@@ -38,6 +55,30 @@ SCHEMA = {
         {
             "name": "party_full_name_idx",
             "cypher": "INDEX party_full_name_idx IF NOT EXISTS FOR (n:Party) ON (n.full_name)",
+        },
+        {
+            "name": "doc_source_id_idx",
+            "cypher": "INDEX doc_source_id_idx IF NOT EXISTS FOR (n:Document) ON (n.source_id)",
+        },
+        {
+            "name": "doc_party_id_idx",
+            "cypher": "INDEX doc_party_id_idx IF NOT EXISTS FOR (n:Document) ON (n.party_id)",
+        },
+        {
+            "name": "doc_canonical_text_sha256_idx",
+            "cypher": "INDEX doc_canonical_text_sha256_idx IF NOT EXISTS FOR (n:Document) ON (n.canonical_text_sha256)",
+        },
+        {
+            "name": "segment_sha256_idx",
+            "cypher": "INDEX segment_sha256_idx IF NOT EXISTS FOR (n:DocumentSegment) ON (n.segment_sha256)",
+        },
+        {
+            "name": "source_snapshot_raw_sha256_idx",
+            "cypher": "INDEX source_snapshot_raw_sha256_idx IF NOT EXISTS FOR (n:SourceSnapshot) ON (n.raw_sha256)",
+        },
+        {
+            "name": "source_document_sha256_idx",
+            "cypher": "INDEX source_document_sha256_idx IF NOT EXISTS FOR (n:SourceDocument) ON (n.sha256)",
         },
         # vector indexes for fast embedding search (requires Neo4j vector plugin)
         {
@@ -69,30 +110,39 @@ class SchemaManager:
                 stmt = f"CREATE {idx['cypher']}"
                 session.run(stmt)
 
+    @staticmethod
+    def _quote_schema_name(name: str) -> str:
+        return f"`{name.replace('`', '``')}`"
+
     def clear_database(self) -> None:
         """Remove all data, indexes, and constraints from the database."""
         with self.driver.session() as session:
-            # Drop all constraints
-            for ct in SCHEMA["constraints"]:
-                stmt = f"DROP CONSTRAINT {ct['name']} IF EXISTS"
-                try:
-                    session.run(stmt)
-                except Exception as e:
-                    # It's okay if a constraint doesn't exist when we try to drop it
-                    print(f"Error dropping constraint {ct['name']}: {e}")
-
-            # Drop all indexes
-            for idx in SCHEMA["indexes"]:
-                index_name = idx["name"]
-                stmt = f"DROP INDEX {index_name} IF EXISTS"
-                try:
-                    session.run(stmt)
-                except Exception as e:
-                    # It's okay if an index doesn't exist when we try to drop it
-                    print(f"Error dropping index {index_name}: {e}")
-
             # Delete all nodes and relationships
             session.run("MATCH (n) DETACH DELETE n")
+
+            # Drop live constraints by actual database name. Older imports created
+            # auto-named constraints, so relying only on SCHEMA names leaves schema
+            # residue behind.
+            constraints = list(session.run("SHOW CONSTRAINTS YIELD name RETURN name"))
+            for record in constraints:
+                constraint_name = record["name"]
+                session.run(
+                    f"DROP CONSTRAINT {self._quote_schema_name(constraint_name)} IF EXISTS"
+                )
+
+            # Drop live non-lookup indexes by actual database name. Constraint-backed
+            # indexes are removed with their constraints above.
+            indexes = list(
+                session.run(
+                    "SHOW INDEXES YIELD name, type "
+                    "WHERE type <> 'LOOKUP' "
+                    "RETURN name"
+                )
+            )
+            for record in indexes:
+                index_name = record["name"]
+                session.run(f"DROP INDEX {self._quote_schema_name(index_name)} IF EXISTS")
+
             print("Database nuked: all data, indexes, and constraints removed.")
 
     def upsert_topic(self, topic: Topic) -> None:
@@ -119,12 +169,108 @@ class SchemaManager:
                 """
                 MERGE (d:Document {id:$id})
                 SET d.path        = $path,
-                    d.raw_content = $raw_content
+                    d.title       = $title,
+                    d.raw_content = $raw_content,
+                    d.source_id = $source_id,
+                    d.party_id = $party_id,
+                    d.source_type = $source_type,
+                    d.document_type = $document_type,
+                    d.election_year = $election_year,
+                    d.public_url = $public_url,
+                    d.snapshot_id = $snapshot_id,
+                    d.raw_sha256 = $raw_sha256,
+                    d.canonical_text_sha256 = $canonical_text_sha256,
+                    d.captured_at = $captured_at,
+                    d.parser_version = $parser_version,
+                    d.source_page_url = $source_page_url,
+                    d.download_url = $download_url,
+                    d.final_url = $final_url,
+                    d.content_type = $content_type,
+                    d.byte_size = $byte_size
                 """,
                 id=doc.id,
                 path=doc.path,
+                title=doc.title,
                 raw_content=doc.raw_content,
+                source_id=doc.source_id,
+                party_id=doc.party_id,
+                source_type=doc.source_type,
+                document_type=doc.document_type,
+                election_year=doc.election_year,
+                public_url=doc.public_url,
+                snapshot_id=doc.snapshot_id,
+                raw_sha256=doc.raw_sha256,
+                canonical_text_sha256=doc.canonical_text_sha256,
+                captured_at=doc.captured_at,
+                parser_version=doc.parser_version,
+                source_page_url=doc.source_page_url,
+                download_url=doc.download_url,
+                final_url=doc.final_url,
+                content_type=doc.content_type,
+                byte_size=doc.byte_size,
             )
+
+            if doc.source_id:
+                session.run(
+                    """
+                    MERGE (src:Source {source_id:$source_id})
+                    SET src.source_type = $source_type,
+                        src.party_id = $party_id,
+                        src.election_year = $election_year,
+                        src.public_url = $public_url
+                    WITH src
+                    MATCH (d:Document {id:$doc_id})
+                    MERGE (src)-[:PRODUCED_DOCUMENT]->(d)
+                    WITH src
+                    OPTIONAL MATCH (p:Party {abbreviation:$party_id})
+                    FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+                        MERGE (p)-[:PUBLISHES]->(src)
+                    )
+                    """,
+                    source_id=doc.source_id,
+                    source_type=doc.source_type,
+                    party_id=doc.party_id,
+                    election_year=doc.election_year,
+                    public_url=doc.public_url,
+                    doc_id=doc.id,
+                )
+
+            if doc.snapshot_id:
+                session.run(
+                    """
+                    MERGE (snap:SourceSnapshot {snapshot_id:$snapshot_id})
+                    SET snap.raw_sha256 = $raw_sha256,
+                        snap.captured_at = $captured_at,
+                        snap.public_url = $public_url
+                    WITH snap
+                    MATCH (d:Document {id:$doc_id})
+                    MERGE (snap)-[:EXTRACTED_TO]->(d)
+                    WITH snap
+                    OPTIONAL MATCH (src:Source {source_id:$source_id})
+                    FOREACH (_ IN CASE WHEN src IS NULL THEN [] ELSE [1] END |
+                        MERGE (src)-[:HAS_SNAPSHOT]->(snap)
+                    )
+                    """,
+                    snapshot_id=doc.snapshot_id,
+                    raw_sha256=doc.raw_sha256,
+                    captured_at=doc.captured_at,
+                    public_url=doc.public_url,
+                    doc_id=doc.id,
+                    source_id=doc.source_id,
+                )
+
+            if doc.raw_sha256:
+                session.run(
+                    """
+                    OPTIONAL MATCH (source_doc:SourceDocument {sha256:$raw_sha256})
+                    MATCH (d:Document {id:$doc_id})
+                    FOREACH (_ IN CASE WHEN source_doc IS NULL THEN [] ELSE [1] END |
+                        MERGE (source_doc)-[:PARSED_TO]->(d)
+                    )
+                    """,
+                    raw_sha256=doc.raw_sha256,
+                    doc_id=doc.id,
+                )
 
             # Prepare segment data for bulk upsert
             segments_data = []
@@ -145,6 +291,11 @@ class SchemaManager:
                         "public_url": seg.public_url,
                         "doc_id": doc.id,
                         "type": seg.type,
+                        "segment_sha256": seg.segment_sha256,
+                        "source_id": seg.source_id,
+                        "snapshot_id": seg.snapshot_id,
+                        "title": seg.title,
+                        "topic_id": seg.topic_id,
                     }
                 )
 
@@ -161,10 +312,20 @@ class SchemaManager:
                         s.metadata    = seg_data.metadata,
                         s.embedding   = seg_data.embedding,
                         s.public_url  = seg_data.public_url,
-                        s.type        = seg_data.type
+                        s.type        = seg_data.type,
+                        s.segment_sha256 = seg_data.segment_sha256,
+                        s.source_id = seg_data.source_id,
+                        s.snapshot_id = seg_data.snapshot_id,
+                        s.title = seg_data.title,
+                        s.topic_id = seg_data.topic_id
                     WITH s, seg_data
                     MATCH (d:Document {id:seg_data.doc_id})
                     MERGE (d)-[:CONTAINS]->(s)
+                    WITH s, seg_data
+                    OPTIONAL MATCH (snap:SourceSnapshot {snapshot_id:seg_data.snapshot_id})
+                    FOREACH (_ IN CASE WHEN snap IS NULL THEN [] ELSE [1] END |
+                        MERGE (snap)-[:EXTRACTED_SEGMENT]->(s)
+                    )
                     """,
                     segments_data=segments_data,
                 )
@@ -217,6 +378,203 @@ class SchemaManager:
                 SET p.full_name = party.full_name
                 """,
                 parties=parties_data,
+            )
+
+    def link_sources_to_parties(self) -> None:
+        """Link Source nodes with party_id metadata to Party nodes."""
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (src:Source)
+                WHERE src.party_id IS NOT NULL
+                MATCH (p:Party {abbreviation: src.party_id})
+                MERGE (p)-[:PUBLISHES]->(src)
+                """
+            )
+
+    def upsert_source_registry(self, registry_path: Path) -> None:
+        """Store configured source registry entries as Source nodes."""
+        if not registry_path.exists():
+            return
+
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        sources_data = []
+        for party in registry.get("parties", []):
+            party_id = party.get("party_id")
+            for source in party.get("sources", []):
+                sources_data.append(
+                    {
+                        "source_id": source.get("source_id"),
+                        "party_id": party_id,
+                        "party_name": party.get("name"),
+                        "document_folder": party.get("document_folder"),
+                        "source_type": source.get("source_type"),
+                        "base_url": source.get("base_url"),
+                        "seed_urls": source.get("seed_urls", []),
+                        "discovery": source.get("discovery", []),
+                        "allow_paths": source.get("allow_paths", []),
+                        "deny_paths": source.get("deny_paths", []),
+                        "include_media_types": source.get("include_media_types", []),
+                        "election_year": source.get("election_year"),
+                        "priority": source.get("priority"),
+                        "max_pages": source.get("max_pages"),
+                        "max_link_depth": source.get("max_link_depth"),
+                    }
+                )
+
+        if not sources_data:
+            return
+
+        with self.driver.session() as session:
+            session.run(
+                """
+                UNWIND $sources AS source
+                MERGE (src:Source {source_id: source.source_id})
+                SET src.party_id = source.party_id,
+                    src.party_name = source.party_name,
+                    src.document_folder = source.document_folder,
+                    src.source_type = source.source_type,
+                    src.base_url = source.base_url,
+                    src.seed_urls = source.seed_urls,
+                    src.discovery = source.discovery,
+                    src.allow_paths = source.allow_paths,
+                    src.deny_paths = source.deny_paths,
+                    src.include_media_types = source.include_media_types,
+                    src.election_year = source.election_year,
+                    src.priority = source.priority,
+                    src.max_pages = source.max_pages,
+                    src.max_link_depth = source.max_link_depth
+                """,
+                sources=sources_data,
+            )
+
+    def upsert_source_snapshots(self, manifest_path: Path) -> None:
+        """Store raw crawl snapshot records as SourceSnapshot nodes."""
+        if not manifest_path.exists():
+            return
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        snapshots = manifest.get("snapshots", [])
+        if not snapshots:
+            return
+
+        with self.driver.session() as session:
+            session.run(
+                """
+                UNWIND $snapshots AS snapshot
+                MERGE (snap:SourceSnapshot {snapshot_id: snapshot.snapshot_id})
+                SET snap.source_id = snapshot.source_id,
+                    snap.party_id = snapshot.party_id,
+                    snap.requested_url = snapshot.requested_url,
+                    snap.final_url = snapshot.final_url,
+                    snap.canonical_url = snapshot.canonical_url,
+                    snap.retrieved_at = snapshot.retrieved_at,
+                    snap.http_status = snapshot.http_status,
+                    snap.content_type = snapshot.content_type,
+                    snap.etag = snapshot.etag,
+                    snap.last_modified = snapshot.last_modified,
+                    snap.raw_path = snapshot.raw_path,
+                    snap.raw_sha256 = snapshot.raw_sha256,
+                    snap.raw_bytes = snapshot.raw_bytes,
+                    snap.fetcher_version = snapshot.fetcher_version,
+                    snap.registry_sha256 = snapshot.registry_sha256
+                WITH snap, snapshot
+                OPTIONAL MATCH (src:Source {source_id: snapshot.source_id})
+                FOREACH (_ IN CASE WHEN src IS NULL THEN [] ELSE [1] END |
+                    MERGE (src)-[:HAS_SNAPSHOT]->(snap)
+                )
+                """,
+                snapshots=snapshots,
+            )
+
+    def upsert_raw_snapshot_package(self, package_manifest_path: Path) -> None:
+        """Store the LFS raw snapshot archive manifest."""
+        if not package_manifest_path.exists():
+            return
+
+        package = json.loads(package_manifest_path.read_text(encoding="utf-8"))
+        with self.driver.session() as session:
+            session.run(
+                """
+                MERGE (pkg:RawSnapshotPackage {archive_sha256:$archive_sha256})
+                SET pkg.archive_path = $archive_path,
+                    pkg.archive_bytes = $archive_bytes,
+                    pkg.source_manifest_path = $source_manifest_path,
+                    pkg.source_manifest_sha256 = $source_manifest_sha256,
+                    pkg.raw_file_count = $raw_file_count,
+                    pkg.raw_total_bytes = $raw_total_bytes,
+                    pkg.snapshot_count = $snapshot_count,
+                    pkg.generated_at = $generated_at
+                """,
+                archive_sha256=package.get("archive_sha256"),
+                archive_path=package.get("archive_path"),
+                archive_bytes=package.get("archive_bytes"),
+                source_manifest_path=package.get("source_manifest_path"),
+                source_manifest_sha256=package.get("source_manifest_sha256"),
+                raw_file_count=package.get("raw_file_count"),
+                raw_total_bytes=package.get("raw_total_bytes"),
+                snapshot_count=package.get("snapshot_count"),
+                generated_at=package.get("generated_at"),
+            )
+
+            files = package.get("files", [])
+            if files:
+                session.run(
+                    """
+                    UNWIND $files AS file
+                    MATCH (pkg:RawSnapshotPackage {archive_sha256:$archive_sha256})
+                    MATCH (snap:SourceSnapshot {snapshot_id:file.snapshot_id})
+                    MERGE (pkg)-[:CONTAINS_RAW_SNAPSHOT]->(snap)
+                    """,
+                    archive_sha256=package.get("archive_sha256"),
+                    files=files,
+                )
+
+    def upsert_pdf_source_documents(self, manifest_path: Path) -> None:
+        """Store official PDF source-document manifest records."""
+        if not manifest_path.exists():
+            return
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        documents = manifest.get("documents", [])
+        if not documents:
+            return
+
+        records = []
+        for record in documents:
+            source_id = Path(record["path"]).stem
+            records.append({**record, "source_id": source_id})
+
+        with self.driver.session() as session:
+            session.run(
+                """
+                UNWIND $records AS record
+                MERGE (src:Source {source_id:record.source_id})
+                SET src.party_id = record.party_id,
+                    src.party_name = record.party,
+                    src.source_type = record.document_type,
+                    src.election_year = record.year,
+                    src.public_url = record.public_path,
+                    src.download_url = record.download_url,
+                    src.source_page_url = record.source_page_url
+                MERGE (source_doc:SourceDocument {path:record.path})
+                SET source_doc.source_id = record.source_id,
+                    source_doc.party_id = record.party_id,
+                    source_doc.party = record.party,
+                    source_doc.document_type = record.document_type,
+                    source_doc.year = record.year,
+                    source_doc.title = record.title,
+                    source_doc.public_path = record.public_path,
+                    source_doc.source_page_url = record.source_page_url,
+                    source_doc.download_url = record.download_url,
+                    source_doc.final_url = record.final_url,
+                    source_doc.retrieved_at = record.retrieved_at,
+                    source_doc.content_type = record.content_type,
+                    source_doc.bytes = record.bytes,
+                    source_doc.sha256 = record.sha256
+                MERGE (src)-[:HAS_SOURCE_DOCUMENT]->(source_doc)
+                """,
+                records=records,
             )
 
     def link_documents_to_parties(self) -> None:

@@ -21,6 +21,9 @@ COMBINED_STOPWORDS = list(
     set(SW_STOPWORDS) | set(EN_STOPWORDS)
 )  # Use set union for unique words
 
+SPACY_MAX_LENGTH = 5_000_000
+LANGUAGE_DETECTION_SAMPLE_CHARS = 5_000
+
 
 # Load spaCy models for English and Swedish (download if missing)
 try:
@@ -35,6 +38,9 @@ except OSError:
     spacy.cli.download("sv_core_news_sm")
     nlp_sv = spacy.load("sv_core_news_sm", disable=["parser", "ner"])
 
+nlp_en.max_length = SPACY_MAX_LENGTH
+nlp_sv.max_length = SPACY_MAX_LENGTH
+
 
 def lemmatize_and_tokenize(doc: str) -> list[str]:
     """
@@ -44,7 +50,7 @@ def lemmatize_and_tokenize(doc: str) -> list[str]:
     text = doc.lower().strip()
     # Fallback to English if detection fails
     try:
-        lang = detect(text)
+        lang = detect(text[:LANGUAGE_DETECTION_SAMPLE_CHARS])
     except LangDetectException:
         lang = "en"
     # Choose pipeline
@@ -108,8 +114,8 @@ def extract_topics(
         tokenizer=lemmatize_and_tokenize,
         token_pattern=None,  # disable default pattern so tokenizer is used
         ngram_range=(1, 2),
-        max_df=0.90,
-        min_df=0.05,
+        max_df=1.0,
+        min_df=1,
         max_features=2_000,
     )
 

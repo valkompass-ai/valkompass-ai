@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pdfplumber
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -69,11 +70,16 @@ def __parse_and_segment_langchain(
     segments: list[DocumentSegment] = []
     current_search_cursor = 0
 
-    # Construct the public URL for the PDF
-    pdf_filename = os.path.basename(path)
-    # Get the parent directory name (e.g., "liberalerna")
-    party_name = os.path.basename(os.path.dirname(path))
-    pdf_public_url = f"/kb-documents/{party_name}/{pdf_filename}"
+    # Construct the public URL for the PDF, preserving nested paths under documents/.
+    path_obj = Path(path)
+    parts = path_obj.parts
+    if "documents" in parts:
+        documents_index = parts.index("documents")
+        pdf_public_path = Path(*parts[documents_index + 1 :]).as_posix()
+    else:
+        party_name = os.path.basename(os.path.dirname(path))
+        pdf_public_path = f"{party_name}/{os.path.basename(path)}"
+    pdf_public_url = f"/kb-documents/{pdf_public_path}"
 
     for i, text_chunk in enumerate(split_texts):
         # Skip chunks that are empty or contain only whitespace (e.g., "\n", "  ", "\t\n ")
