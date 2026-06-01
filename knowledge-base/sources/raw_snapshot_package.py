@@ -17,6 +17,14 @@ PACKAGE_ARCHIVE_PATH = KB_DIR / "source-snapshots" / "raw-snapshots.tar.gz"
 PACKAGE_MANIFEST_PATH = KB_DIR / "source-snapshots" / "raw-snapshots-package.json"
 PACKAGE_SHA256_PATH = KB_DIR / "source-snapshots" / "raw-snapshots.tar.gz.sha256"
 RAW_PATH_PREFIX = "knowledge-base/source-snapshots/raw/"
+PACKAGE_SOURCE_FIELDS = (
+    "raw_sha256",
+    "raw_bytes",
+    "snapshot_id",
+    "source_id",
+    "party_id",
+    "canonical_url",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -178,6 +186,91 @@ def verify_archive_hash(package_manifest: dict, archive_path: Path) -> None:
         raise ValueError(f"Archive hash mismatch: expected {expected}, got {actual}")
 
 
+def verify_sha256_sidecar(sha256_path: Path, archive_path: Path) -> None:
+    if not sha256_path.exists():
+        raise FileNotFoundError(f"Missing archive sha256 sidecar: {sha256_path}")
+
+    content = sha256_path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise ValueError(f"Archive sha256 sidecar is empty: {sha256_path}")
+
+    expected_hash = sha256_file(archive_path)
+    parts = content.split()
+    actual_hash = parts[0]
+    actual_filename = parts[1] if len(parts) > 1 else archive_path.name
+    if actual_hash != expected_hash:
+        raise ValueError(
+            f"Archive sidecar hash mismatch: expected {expected_hash}, got {actual_hash}"
+        )
+    if actual_filename != archive_path.name:
+        raise ValueError(
+            "Archive sidecar filename mismatch: "
+            f"expected {archive_path.name}, got {actual_filename}"
+        )
+
+
+def verify_package_matches_source_manifest(
+    package_manifest: dict, source_manifest_path: Path
+) -> None:
+    actual_manifest_hash = sha256_file(source_manifest_path)
+    expected_manifest_hash = package_manifest.get("source_manifest_sha256")
+    if actual_manifest_hash != expected_manifest_hash:
+        raise ValueError(
+            "Package source manifest hash mismatch: "
+            f"expected {expected_manifest_hash}, got {actual_manifest_hash}"
+        )
+
+    source_records = source_manifest_records(source_manifest_path)
+    source_by_path = {record["raw_path"]: record for record in source_records}
+    package_files = package_manifest.get("files", [])
+    package_paths = [file["raw_path"] for file in package_files]
+    duplicate_package_paths = sorted(
+        {path for path in package_paths if package_paths.count(path) > 1}
+    )
+    if duplicate_package_paths:
+        raise ValueError(
+            "Package manifest contains duplicate raw paths: "
+            f"{duplicate_package_paths[:5]}"
+        )
+
+    package_by_path = {file["raw_path"]: file for file in package_files}
+    source_paths = set(source_by_path)
+    package_paths_set = set(package_by_path)
+    if source_paths != package_paths_set:
+        missing = sorted(source_paths - package_paths_set)
+        extra = sorted(package_paths_set - source_paths)
+        raise ValueError(
+            "Package manifest does not match source manifest: "
+            f"missing={missing[:5]} extra={extra[:5]}"
+        )
+
+    mismatches: list[str] = []
+    for raw_path in sorted(source_by_path):
+        source_record = source_by_path[raw_path]
+        package_file = package_by_path[raw_path]
+        for field in PACKAGE_SOURCE_FIELDS:
+            if package_file.get(field) != source_record.get(field):
+                mismatches.append(f"{raw_path}:{field}")
+
+    expected_raw_file_count = len(package_files)
+    expected_raw_total_bytes = sum(file["raw_bytes"] for file in package_files)
+    expected_snapshot_count = len(source_records)
+    count_checks = {
+        "raw_file_count": expected_raw_file_count,
+        "raw_total_bytes": expected_raw_total_bytes,
+        "snapshot_count": expected_snapshot_count,
+    }
+    for field, expected_value in count_checks.items():
+        if package_manifest.get(field) != expected_value:
+            mismatches.append(f"{field}")
+
+    if mismatches:
+        raise ValueError(
+            "Package manifest metadata does not match source manifest: "
+            f"{mismatches[:10]}"
+        )
+
+
 def assert_safe_member(member: tarfile.TarInfo) -> None:
     name = member.name
     if member.isdir():
@@ -204,6 +297,7 @@ def unpack_raw_snapshots(args: argparse.Namespace) -> None:
             assert_safe_member(member)
         tar.extractall(PROJECT_ROOT, filter="data")
 
+    args.require_unpacked_raw = True
     verify_raw_snapshots(args)
     print(f"Unpacked {archive_path.relative_to(PROJECT_ROOT)}")
 
@@ -212,23 +306,15 @@ def verify_raw_snapshots(args: argparse.Namespace) -> None:
     archive_path = Path(args.archive).resolve()
     package_manifest_path = Path(args.package_manifest).resolve()
     source_manifest_path = Path(args.source_manifest).resolve()
+    sha256_path = Path(args.sha256).resolve()
     package_manifest = load_package_manifest(package_manifest_path)
 
-    if archive_path.exists():
-        verify_archive_hash(package_manifest, archive_path)
+    verify_archive_hash(package_manifest, archive_path)
+    verify_sha256_sidecar(sha256_path, archive_path)
 
-    source_paths = {
-        record["raw_path"] for record in source_manifest_records(source_manifest_path)
-    }
-    package_paths = {file["raw_path"] for file in package_manifest["files"]}
-    if source_paths != package_paths:
-        missing = sorted(source_paths - package_paths)
-        extra = sorted(package_paths - source_paths)
-        raise ValueError(
-            "Package manifest does not match source manifest: "
-            f"missing={missing[:5]} extra={extra[:5]}"
-        )
+    verify_package_matches_source_manifest(package_manifest, source_manifest_path)
 
+    require_unpacked_raw = getattr(args, "require_unpacked_raw", False)
     missing_files: list[str] = []
     bad_hashes: list[str] = []
     for file in package_manifest["files"]:
@@ -240,6 +326,12 @@ def verify_raw_snapshots(args: argparse.Namespace) -> None:
             bad_hashes.append(file["raw_path"])
 
     if missing_files or bad_hashes:
+        if missing_files and not bad_hashes and not require_unpacked_raw:
+            print(
+                "Verified package archive and manifest; "
+                f"{len(missing_files)} raw snapshots are not unpacked locally."
+            )
+            return
         raise ValueError(
             "Raw snapshot verification failed: "
             f"missing={missing_files[:5]} bad_hashes={bad_hashes[:5]}"
@@ -268,6 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
     unpack_parser.set_defaults(func=unpack_raw_snapshots)
 
     verify_parser = subparsers.add_parser("verify")
+    verify_parser.add_argument(
+        "--require-unpacked-raw",
+        action="store_true",
+        help="Also require every packaged raw file to exist in source-snapshots/raw/.",
+    )
     verify_parser.set_defaults(func=verify_raw_snapshots)
     return parser
 

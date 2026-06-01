@@ -63,17 +63,26 @@ def clean_structured_documents_dir(output_dir: Path) -> None:
 def verify_source_snapshot_package_available() -> None:
     """Verify raw snapshot package/hash when the package metadata is present."""
     package_archive = SOURCE_SNAPSHOTS_DIR / "raw-snapshots.tar.gz"
-    if not package_archive.exists() or not RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH.exists():
-        logger.warning(
-            "Raw source snapshot package is not present; skipping package verification."
+    package_sha256 = SOURCE_SNAPSHOTS_DIR / "raw-snapshots.tar.gz.sha256"
+    required_files = [
+        package_archive,
+        RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH,
+        SOURCE_SNAPSHOT_MANIFEST_PATH,
+        package_sha256,
+    ]
+    missing_files = [path for path in required_files if not path.exists()]
+    if missing_files:
+        missing_list = "\n".join(f"- {path}" for path in missing_files)
+        raise FileNotFoundError(
+            "Raw source snapshot verification cannot run because required "
+            f"traceability files are missing:\n{missing_list}"
         )
-        return
 
     args = argparse.Namespace(
         archive=str(package_archive),
         package_manifest=str(RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH),
         source_manifest=str(SOURCE_SNAPSHOT_MANIFEST_PATH),
-        sha256=str(SOURCE_SNAPSHOTS_DIR / "raw-snapshots.tar.gz.sha256"),
+        sha256=str(package_sha256),
     )
     verify_raw_snapshots(args)
 
@@ -149,6 +158,7 @@ def load_and_parse_documents(
         return []
 
     parsed_documents: list[Document] = []
+    parse_errors: list[str] = []
     print(f"Found {len(doc_paths_abs)} documents. Starting parsing...")
 
     for doc_path_abs in tqdm(doc_paths_abs, desc="Parsing documents", unit="doc"):
@@ -166,13 +176,23 @@ def load_and_parse_documents(
 
             parsed_documents.append(document_obj)
         except NoSuchDocumentError as e:
-            logger.warning(f"Skipping (not found): {doc_path_abs}. Error: {e}")
+            message = f"{doc_path_abs}: {e}"
+            parse_errors.append(message)
+            logger.error(f"Failed to parse discovered document: {message}")
         except Exception as e:
-            logger.error(f"Unexpected error parsing {doc_path_abs}: {e}")
+            message = f"{doc_path_abs}: {type(e).__name__}: {e}"
+            parse_errors.append(message)
+            logger.error(f"Unexpected error parsing {message}")
 
     logger.info(
         f"Successfully parsed {len(parsed_documents)} out of {len(doc_paths_abs)} documents."
     )
+    if parse_errors:
+        error_list = "\n".join(f"- {error}" for error in parse_errors)
+        raise RuntimeError(
+            f"Failed to parse {len(parse_errors)} of {len(doc_paths_abs)} documents:\n"
+            f"{error_list}"
+        )
     return parsed_documents
 
 

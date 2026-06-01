@@ -11,35 +11,35 @@ SCHEMA = {
         # unique IDs on each label
         {
             "name": "topic_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Topic) REQUIRE n.id IS UNIQUE",
+            "cypher": "CONSTRAINT topic_id_unique IF NOT EXISTS FOR (n:Topic) REQUIRE n.id IS UNIQUE",
         },
         {
             "name": "document_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE",
+            "cypher": "CONSTRAINT document_id_unique IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE",
         },
         {
             "name": "segment_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:DocumentSegment) REQUIRE n.id IS UNIQUE",
+            "cypher": "CONSTRAINT segment_id_unique IF NOT EXISTS FOR (n:DocumentSegment) REQUIRE n.id IS UNIQUE",
         },
         {
             "name": "party_abbreviation_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Party) REQUIRE n.abbreviation IS UNIQUE",
+            "cypher": "CONSTRAINT party_abbreviation_unique IF NOT EXISTS FOR (n:Party) REQUIRE n.abbreviation IS UNIQUE",
         },
         {
             "name": "source_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:Source) REQUIRE n.source_id IS UNIQUE",
+            "cypher": "CONSTRAINT source_id_unique IF NOT EXISTS FOR (n:Source) REQUIRE n.source_id IS UNIQUE",
         },
         {
             "name": "source_snapshot_id_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:SourceSnapshot) REQUIRE n.snapshot_id IS UNIQUE",
+            "cypher": "CONSTRAINT source_snapshot_id_unique IF NOT EXISTS FOR (n:SourceSnapshot) REQUIRE n.snapshot_id IS UNIQUE",
         },
         {
             "name": "source_document_path_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:SourceDocument) REQUIRE n.path IS UNIQUE",
+            "cypher": "CONSTRAINT source_document_path_unique IF NOT EXISTS FOR (n:SourceDocument) REQUIRE n.path IS UNIQUE",
         },
         {
             "name": "raw_snapshot_package_sha_unique",
-            "cypher": "CONSTRAINT IF NOT EXISTS FOR (n:RawSnapshotPackage) REQUIRE n.archive_sha256 IS UNIQUE",
+            "cypher": "CONSTRAINT raw_snapshot_package_sha_unique IF NOT EXISTS FOR (n:RawSnapshotPackage) REQUIRE n.archive_sha256 IS UNIQUE",
         },
     ],
     "indexes": [
@@ -110,30 +110,39 @@ class SchemaManager:
                 stmt = f"CREATE {idx['cypher']}"
                 session.run(stmt)
 
+    @staticmethod
+    def _quote_schema_name(name: str) -> str:
+        return f"`{name.replace('`', '``')}`"
+
     def clear_database(self) -> None:
         """Remove all data, indexes, and constraints from the database."""
         with self.driver.session() as session:
-            # Drop all constraints
-            for ct in SCHEMA["constraints"]:
-                stmt = f"DROP CONSTRAINT {ct['name']} IF EXISTS"
-                try:
-                    session.run(stmt)
-                except Exception as e:
-                    # It's okay if a constraint doesn't exist when we try to drop it
-                    print(f"Error dropping constraint {ct['name']}: {e}")
-
-            # Drop all indexes
-            for idx in SCHEMA["indexes"]:
-                index_name = idx["name"]
-                stmt = f"DROP INDEX {index_name} IF EXISTS"
-                try:
-                    session.run(stmt)
-                except Exception as e:
-                    # It's okay if an index doesn't exist when we try to drop it
-                    print(f"Error dropping index {index_name}: {e}")
-
             # Delete all nodes and relationships
             session.run("MATCH (n) DETACH DELETE n")
+
+            # Drop live constraints by actual database name. Older imports created
+            # auto-named constraints, so relying only on SCHEMA names leaves schema
+            # residue behind.
+            constraints = list(session.run("SHOW CONSTRAINTS YIELD name RETURN name"))
+            for record in constraints:
+                constraint_name = record["name"]
+                session.run(
+                    f"DROP CONSTRAINT {self._quote_schema_name(constraint_name)} IF EXISTS"
+                )
+
+            # Drop live non-lookup indexes by actual database name. Constraint-backed
+            # indexes are removed with their constraints above.
+            indexes = list(
+                session.run(
+                    "SHOW INDEXES YIELD name, type "
+                    "WHERE type <> 'LOOKUP' "
+                    "RETURN name"
+                )
+            )
+            for record in indexes:
+                index_name = record["name"]
+                session.run(f"DROP INDEX {self._quote_schema_name(index_name)} IF EXISTS")
+
             print("Database nuked: all data, indexes, and constraints removed.")
 
     def upsert_topic(self, topic: Topic) -> None:

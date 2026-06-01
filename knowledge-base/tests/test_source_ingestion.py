@@ -1,11 +1,14 @@
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import main as kb_main
 from parser import parse_document
 from sources.extractors import discover_links, extracted_item_from_html, sitemap_urls
+from sources.raw_snapshot_package import verify_raw_snapshots, verify_sha256_sidecar
 from sources.registry import load_registry
 from sources.url_tools import canonicalize_url
 
@@ -168,3 +171,207 @@ def test_schema_v2_website_json_segment_ids_survive_duplicate_item_ids(tmp_path)
         "doc_sha256_test-1-url_sha256_duplicate-1",
         "doc_sha256_test-2-url_sha256_duplicate-1",
     ]
+
+
+def test_source_verification_requires_traceability_files(tmp_path, monkeypatch):
+    snapshots_dir = tmp_path / "source-snapshots"
+    snapshots_dir.mkdir()
+    monkeypatch.setattr(kb_main, "SOURCE_SNAPSHOTS_DIR", snapshots_dir)
+    monkeypatch.setattr(
+        kb_main,
+        "RAW_SNAPSHOT_PACKAGE_MANIFEST_PATH",
+        snapshots_dir / "raw-snapshots-package.json",
+    )
+    monkeypatch.setattr(
+        kb_main,
+        "SOURCE_SNAPSHOT_MANIFEST_PATH",
+        snapshots_dir / "manifest.json",
+    )
+
+    with pytest.raises(FileNotFoundError, match="traceability files are missing"):
+        kb_main.verify_source_snapshot_package_available()
+
+
+def test_parse_fails_when_any_discovered_document_fails(tmp_path):
+    docs_dir = tmp_path / "knowledge-base" / "documents"
+    docs_dir.mkdir(parents=True)
+    bad_json = docs_dir / "bad.json"
+    bad_json.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Failed to parse 1 of 1 documents"):
+        kb_main.load_and_parse_documents(docs_dir, tmp_path)
+
+
+def test_sha256_sidecar_is_validated(tmp_path):
+    archive = tmp_path / "raw-snapshots.tar.gz"
+    archive.write_bytes(b"archive bytes")
+    sidecar = tmp_path / "raw-snapshots.tar.gz.sha256"
+    sidecar.write_text("bad-hash  raw-snapshots.tar.gz\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sidecar hash mismatch"):
+        verify_sha256_sidecar(sidecar, archive)
+
+
+def test_verify_package_does_not_require_unpacked_raw_cache(tmp_path, capsys):
+    archive = tmp_path / "raw-snapshots.tar.gz"
+    archive.write_bytes(b"archive bytes")
+    archive_hash = hashlib.sha256(b"archive bytes").hexdigest()
+    sidecar = tmp_path / "raw-snapshots.tar.gz.sha256"
+    sidecar.write_text(f"{archive_hash}  raw-snapshots.tar.gz\n", encoding="utf-8")
+
+    raw_path = "knowledge-base/source-snapshots/raw/party/source/sha256-abc.html"
+    source_manifest = tmp_path / "manifest.json"
+    source_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "snapshots": [
+                    {
+                        "snapshot_id": "snap_abc",
+                        "source_id": "source",
+                        "party_id": "P",
+                        "requested_url": "https://example.test",
+                        "final_url": "https://example.test",
+                        "canonical_url": "https://example.test/",
+                        "retrieved_at": "2026-06-01T00:00:00+00:00",
+                        "http_status": 200,
+                        "content_type": "text/html",
+                        "raw_path": raw_path,
+                        "raw_sha256": "abc",
+                        "raw_bytes": 10,
+                        "fetcher_version": "test",
+                        "registry_sha256": "registry",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_manifest_hash = hashlib.sha256(source_manifest.read_bytes()).hexdigest()
+    package_manifest = tmp_path / "raw-snapshots-package.json"
+    package_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "archive_path": "knowledge-base/source-snapshots/raw-snapshots.tar.gz",
+                "archive_sha256": archive_hash,
+                "archive_bytes": archive.stat().st_size,
+                "source_manifest_path": "knowledge-base/source-snapshots/manifest.json",
+                "source_manifest_sha256": source_manifest_hash,
+                "raw_file_count": 1,
+                "raw_total_bytes": 10,
+                "snapshot_count": 1,
+                "files": [
+                    {
+                        "raw_path": raw_path,
+                        "raw_sha256": "abc",
+                        "raw_bytes": 10,
+                        "snapshot_id": "snap_abc",
+                        "source_id": "source",
+                        "party_id": "P",
+                        "canonical_url": "https://example.test/",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "archive": str(archive),
+            "package_manifest": str(package_manifest),
+            "source_manifest": str(source_manifest),
+            "sha256": str(sidecar),
+            "require_unpacked_raw": False,
+        },
+    )()
+
+    verify_raw_snapshots(args)
+
+    assert "raw snapshots are not unpacked locally" in capsys.readouterr().out
+
+    args.require_unpacked_raw = True
+    with pytest.raises(ValueError, match="Raw snapshot verification failed"):
+        verify_raw_snapshots(args)
+
+
+def test_verify_package_rejects_stale_source_manifest_metadata(tmp_path):
+    archive = tmp_path / "raw-snapshots.tar.gz"
+    archive.write_bytes(b"archive bytes")
+    archive_hash = hashlib.sha256(b"archive bytes").hexdigest()
+    sidecar = tmp_path / "raw-snapshots.tar.gz.sha256"
+    sidecar.write_text(f"{archive_hash}  raw-snapshots.tar.gz\n", encoding="utf-8")
+
+    raw_path = "knowledge-base/source-snapshots/raw/party/source/sha256-abc.html"
+    source_manifest = tmp_path / "manifest.json"
+    source_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "snapshots": [
+                    {
+                        "snapshot_id": "snap_abc",
+                        "source_id": "source",
+                        "party_id": "P",
+                        "requested_url": "https://example.test",
+                        "final_url": "https://example.test",
+                        "canonical_url": "https://example.test/",
+                        "retrieved_at": "2026-06-01T00:00:00+00:00",
+                        "http_status": 200,
+                        "content_type": "text/html",
+                        "raw_path": raw_path,
+                        "raw_sha256": "abc",
+                        "raw_bytes": 10,
+                        "fetcher_version": "test",
+                        "registry_sha256": "registry",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_manifest_hash = hashlib.sha256(source_manifest.read_bytes()).hexdigest()
+    package_manifest = tmp_path / "raw-snapshots-package.json"
+    package_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "archive_path": "knowledge-base/source-snapshots/raw-snapshots.tar.gz",
+                "archive_sha256": archive_hash,
+                "archive_bytes": archive.stat().st_size,
+                "source_manifest_path": "knowledge-base/source-snapshots/manifest.json",
+                "source_manifest_sha256": source_manifest_hash,
+                "raw_file_count": 1,
+                "raw_total_bytes": 10,
+                "snapshot_count": 1,
+                "files": [
+                    {
+                        "raw_path": raw_path,
+                        "raw_sha256": "stale-hash",
+                        "raw_bytes": 10,
+                        "snapshot_id": "snap_abc",
+                        "source_id": "source",
+                        "party_id": "P",
+                        "canonical_url": "https://example.test/",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "archive": str(archive),
+            "package_manifest": str(package_manifest),
+            "source_manifest": str(source_manifest),
+            "sha256": str(sidecar),
+            "require_unpacked_raw": False,
+        },
+    )()
+
+    with pytest.raises(ValueError, match="metadata does not match source manifest"):
+        verify_raw_snapshots(args)

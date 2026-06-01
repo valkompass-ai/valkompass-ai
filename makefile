@@ -17,6 +17,9 @@ unpack-source-snapshots:
 verify-source-snapshots-package:
 	cd knowledge-base && uv run python -m sources.raw_snapshot_package verify
 
+verify-source-snapshots-raw:
+	cd knowledge-base && uv run python -m sources.raw_snapshot_package verify --require-unpacked-raw
+
 parse-kb-docs:
 	cd knowledge-base && uv run python main.py --actions verify-sources parse
 
