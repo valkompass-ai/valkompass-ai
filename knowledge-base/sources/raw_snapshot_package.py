@@ -50,6 +50,8 @@ def source_manifest_records(source_manifest_path: Path) -> list[dict]:
         raw_path = snapshot["raw_path"]
         if not raw_path.startswith(RAW_PATH_PREFIX):
             raise ValueError(f"Unexpected raw_path outside package prefix: {raw_path}")
+        if raw_path in records_by_path:
+            raise ValueError(f"Duplicate raw_path in source manifest: {raw_path}")
         records_by_path[raw_path] = snapshot
     return [records_by_path[path] for path in sorted(records_by_path)]
 

@@ -12,6 +12,7 @@ from parser import parse_document
 from sources.extractors import discover_links, extracted_item_from_html, sitemap_urls
 from sources.raw_snapshot_package import (
     assert_safe_member,
+    source_manifest_records,
     verify_raw_snapshots,
     verify_sha256_sidecar,
 )
@@ -233,6 +234,34 @@ def test_archive_member_safety_checks_directories():
 
     with pytest.raises(ValueError, match="unsafe archive path"):
         assert_safe_member(unsafe_dir)
+
+
+def test_source_manifest_rejects_duplicate_raw_paths(tmp_path):
+    raw_path = "knowledge-base/source-snapshots/raw/party/source/sha256-abc.html"
+    source_manifest = tmp_path / "manifest.json"
+    snapshot = {
+        "snapshot_id": "snap_abc",
+        "source_id": "source",
+        "party_id": "P",
+        "requested_url": "https://example.test",
+        "final_url": "https://example.test",
+        "canonical_url": "https://example.test/",
+        "retrieved_at": "2026-06-01T00:00:00+00:00",
+        "http_status": 200,
+        "content_type": "text/html",
+        "raw_path": raw_path,
+        "raw_sha256": "abc",
+        "raw_bytes": 10,
+        "fetcher_version": "test",
+        "registry_sha256": "registry",
+    }
+    source_manifest.write_text(
+        json.dumps({"schema_version": 1, "snapshots": [snapshot, snapshot]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Duplicate raw_path"):
+        source_manifest_records(source_manifest)
 
 
 def test_verify_package_does_not_require_unpacked_raw_cache(tmp_path, capsys):
