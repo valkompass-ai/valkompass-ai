@@ -43,6 +43,9 @@ From the project root directory:
 make test-kb              # Run all tests
 make validate-source-registry # Validate configured party source registry
 make crawl-party-sources  # Crawl configured party website sources
+make package-source-snapshots # Package ignored raw crawl snapshots into Git LFS
+make unpack-source-snapshots  # Restore ignored raw crawl snapshots from Git LFS
+make verify-source-snapshots-package # Verify packaged raw crawl snapshots
 make parse-kb-docs        # Parse PDF/JSON documents  
 make embed-kb-docs        # Generate embeddings
 make topic-model-kb-docs  # Run topic modeling
@@ -73,6 +76,24 @@ uv run python -m sources.cli crawl --all
 ```
 
 The crawler is registry-bound: it only follows configured hosts and path prefixes, stores source IDs, capture timestamps, raw byte hashes, and canonical text hashes for traceability.
+
+Raw crawl snapshots under `source-snapshots/raw/` stay ignored during normal development. To preserve the exact raw bytes used by the tracked `source-snapshots/manifest.json`, package them into the Git LFS archive:
+
+```bash
+make package-source-snapshots
+make unpack-source-snapshots
+make verify-source-snapshots-package
+```
+
+The package contains only raw files referenced by the source snapshot manifest. Packaging fails if the local ignored raw cache is incomplete; in that case, run `make crawl-party-sources` or unpack an existing package first. `source-snapshots/raw-snapshots-package.json` and `source-snapshots/raw-snapshots.tar.gz.sha256` remain normal text files so the repo shows exactly which raw files, hashes, parties, sources, and URLs are in the LFS archive.
+
+Curated official PDF documents live under `documents/{party}/pdf/` using:
+
+```text
+{party}-{year}-{document-type}[-qualifier].pdf
+```
+
+Their source pages, download URLs, byte sizes, and SHA-256 hashes are recorded in `source-documents-manifest.json`.
 
 ## Testing
 

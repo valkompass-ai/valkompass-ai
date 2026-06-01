@@ -108,7 +108,7 @@ def extract_topics(
         tokenizer=lemmatize_and_tokenize,
         token_pattern=None,  # disable default pattern so tokenizer is used
         ngram_range=(1, 2),
-        max_df=0.90,
+        max_df=1.0,
         min_df=1,
         max_features=2_000,
     )

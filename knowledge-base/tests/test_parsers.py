@@ -7,8 +7,8 @@ from util.errors import NoSuchDocumentError
 
 def test_parse_pdf():
     """Test parsing a PDF document via parse_document."""
-    pdf_path = "documents/socialdemokraterna/socialdemokraterna-valmanifest-2022.pdf"
-    document_id = "test-socialdemokraterna-valmanifest"
+    pdf_path = "documents/socialdemokraterna/pdf/socialdemokraterna-2025-partiprogram.pdf"
+    document_id = "test-socialdemokraterna-partiprogram"
     document = parse_document(pdf_path, document_id)
 
     assert document is not None, "The document should not be None."
