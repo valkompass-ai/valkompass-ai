@@ -326,14 +326,14 @@ def verify_archive_members(package_manifest: dict, archive_path: Path) -> None:
 
 def assert_safe_member(member: tarfile.TarInfo) -> None:
     name = member.name
-    if member.isdir():
-        return
-    if not member.isfile():
-        raise ValueError(f"Refusing non-file archive member: {name}")
     if Path(name).is_absolute() or ".." in Path(name).parts:
         raise ValueError(f"Refusing unsafe archive path: {name}")
     if not name.startswith(RAW_PATH_PREFIX):
         raise ValueError(f"Unexpected archive member outside raw prefix: {name}")
+    if member.isdir():
+        return
+    if not member.isfile():
+        raise ValueError(f"Refusing non-file archive member: {name}")
 
 
 def unpack_raw_snapshots(args: argparse.Namespace) -> None:

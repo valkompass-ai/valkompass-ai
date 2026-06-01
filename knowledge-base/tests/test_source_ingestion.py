@@ -10,7 +10,11 @@ from pydantic import ValidationError
 import main as kb_main
 from parser import parse_document
 from sources.extractors import discover_links, extracted_item_from_html, sitemap_urls
-from sources.raw_snapshot_package import verify_raw_snapshots, verify_sha256_sidecar
+from sources.raw_snapshot_package import (
+    assert_safe_member,
+    verify_raw_snapshots,
+    verify_sha256_sidecar,
+)
 from sources.registry import load_registry
 from sources.url_tools import canonicalize_url
 
@@ -221,6 +225,14 @@ def test_sha256_sidecar_is_validated(tmp_path):
 
     with pytest.raises(ValueError, match="sidecar hash mismatch"):
         verify_sha256_sidecar(sidecar, archive)
+
+
+def test_archive_member_safety_checks_directories():
+    unsafe_dir = tarfile.TarInfo("../outside")
+    unsafe_dir.type = tarfile.DIRTYPE
+
+    with pytest.raises(ValueError, match="unsafe archive path"):
+        assert_safe_member(unsafe_dir)
 
 
 def test_verify_package_does_not_require_unpacked_raw_cache(tmp_path, capsys):
