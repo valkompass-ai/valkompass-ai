@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ChatTrace, Message } from "@/types";
-import { getGeminiChatResponse, getGeminiChatResponseStream, AgentApproach } from "@/lib/gemini-service";
+import { getChatResponse, getChatResponseStream, AgentApproach } from "@/lib/chat-service";
 import { withAnalytics, getUserId } from "@/lib/middleware/analytics";
 import { v7 as uuidv7 } from 'uuid';
 
@@ -27,8 +27,8 @@ async function chatHandler(req: NextRequest) {
       return createChatStreamResponse(userMessage, userId, agentApproach, conversationId);
     }
 
-    // Use consolidated gemini service with agent approach
-    const aiTextResponse = await getGeminiChatResponse(userMessage, userId, agentApproach, {
+    // Use consolidated chat service with agent approach
+    const aiTextResponse = await getChatResponse(userMessage, userId, agentApproach, {
       conversationId,
     });
 
@@ -69,7 +69,7 @@ function createChatStreamResponse(
 
       void (async () => {
         try {
-          const aiTextResponse = await getGeminiChatResponseStream(
+          const aiTextResponse = await getChatResponseStream(
             userMessage,
             userId,
             agentApproach,

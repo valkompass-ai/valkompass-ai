@@ -67,18 +67,16 @@ export async function trackLLMCall(
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
-    /** Prompt tokens served from Gemini's context cache, billed at the reduced cache rate. */
+    /** Prompt tokens served from the provider's prompt cache, billed at the reduced cache rate. */
     cachedInputTokens?: number;
     cacheHitRate?: number;
     cacheEligible?: boolean;
-    thoughtsTokens?: number;
+    reasoningTokens?: number;
     duration?: number;
     cost?: number;
     /** Cost the call would have had without any cache hit. */
     costWithoutCache?: number;
     cacheSavingsUsd?: number;
-    /** True when the primary chat model was out of quota and the fallback model answered. */
-    usedFallbackModel?: boolean;
     success?: boolean;
     errorMessage?: string;
     temperature?: number;
@@ -96,12 +94,11 @@ export async function trackLLMCall(
     cached_input_tokens: properties?.cachedInputTokens,
     cache_hit_rate: properties?.cacheHitRate,
     cache_eligible: properties?.cacheEligible,
-    thoughts_tokens: properties?.thoughtsTokens,
+    reasoning_tokens: properties?.reasoningTokens,
     duration_ms: properties?.duration,
     cost_usd: properties?.cost,
     cost_without_cache_usd: properties?.costWithoutCache,
     cache_savings_usd: properties?.cacheSavingsUsd,
-    used_fallback_model: properties?.usedFallbackModel,
     success: properties?.success ?? true,
     error_message: properties?.errorMessage,
     temperature: properties?.temperature,

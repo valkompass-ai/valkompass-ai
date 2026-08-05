@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import {
-  DEFAULT_CHAT_FALLBACK_MODEL_KEY,
   DEFAULT_CHAT_MODEL_KEY,
   DEFAULT_EMBEDDING_MODEL_KEY,
   DEFAULT_QUERY_MODEL_KEY,
@@ -16,13 +15,12 @@ import {
 
 describe('Model configuration', () => {
   const embeddingModel: EmbeddingModelKey = 'text-embedding-3-small'
-  const llmModel: LLMModelKey = 'gemini-3.5-flash-lite'
+  const llmModel: LLMModelKey = 'gpt-5.6-luna'
 
   it('uses current default model keys', () => {
     expect(DEFAULT_EMBEDDING_MODEL_KEY).toBe('text-embedding-3-small')
-    expect(DEFAULT_CHAT_MODEL_KEY).toBe('gemini-3.6-flash')
-    expect(DEFAULT_QUERY_MODEL_KEY).toBe('gemini-3.5-flash-lite')
-    expect(DEFAULT_CHAT_FALLBACK_MODEL_KEY).toBe('gemini-3.5-flash-lite')
+    expect(DEFAULT_CHAT_MODEL_KEY).toBe('gpt-5.6-luna')
+    expect(DEFAULT_QUERY_MODEL_KEY).toBe('gpt-5.6-luna')
   })
 
   it('has only current embedding model configuration', () => {
@@ -39,27 +37,21 @@ describe('Model configuration', () => {
   })
 
   it('has only current Gemini model configurations', () => {
-    expect(Object.keys(LLM_MODELS)).toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash'])
+    expect(Object.keys(LLM_MODELS)).toEqual(['gpt-5.6-luna'])
 
-    const flashLite = LLM_MODELS['gemini-3.5-flash-lite']
-    expect(flashLite.model).toBe('gemini-3.5-flash-lite')
-    expect(flashLite.contextWindow).toBe(1_048_576)
-    expect(flashLite.maxOutputTokens).toBe(65_536)
-    expect(flashLite.cost.inputCostPer1MTokens.standard).toBe(0.3)
-    expect(flashLite.cost.outputCostPer1MTokens.standard).toBe(2.5)
-    expect(flashLite.cost.cachedInputCostPer1MTokens).toBe(0.03)
-
-    const flash = LLM_MODELS['gemini-3.6-flash']
-    expect(flash.model).toBe('gemini-3.6-flash')
-    expect(flash.contextWindow).toBe(1_048_576)
-    expect(flash.maxOutputTokens).toBe(65_536)
-    expect(flash.cost.inputCostPer1MTokens.standard).toBe(1.5)
-    expect(flash.cost.outputCostPer1MTokens.standard).toBe(7.5)
-    expect(flash.cost.cachedInputCostPer1MTokens).toBe(0.15)
+    const luna = LLM_MODELS['gpt-5.6-luna']
+    expect(luna.provider).toBe('openai')
+    expect(luna.model).toBe('gpt-5.6-luna')
+    expect(luna.contextWindow).toBe(400_000)
+    expect(luna.maxOutputTokens).toBe(32_768)
+    expect(luna.reasoningEffort).toBe('max')
+    expect(luna.cost.inputCostPer1MTokens.standard).toBe(0.2)
+    expect(luna.cost.outputCostPer1MTokens.standard).toBe(1.2)
+    expect(luna.cost.cachedInputCostPer1MTokens).toBe(0.02)
   })
 
   it('prices cached prompt tokens at the cache rate', () => {
-    const flash = LLM_MODELS['gemini-3.6-flash']
+    const flash = LLM_MODELS['gpt-5.6-luna']
     // Cached tokens are part of promptTokenCount, so they are discounted, not added on top.
     expect(flash.cost.cachedInputCostPer1MTokens).toBeLessThan(flash.cost.inputCostPer1MTokens.standard)
 
@@ -68,27 +60,27 @@ describe('Model configuration', () => {
     const outputTokens = 500
 
     const expected =
-      ((promptTokens - cachedTokens) / 1_000_000) * 1.5 +
-      (cachedTokens / 1_000_000) * 0.15 +
-      (outputTokens / 1_000_000) * 7.5
+      ((promptTokens - cachedTokens) / 1_000_000) * 0.2 +
+      (cachedTokens / 1_000_000) * 0.02 +
+      (outputTokens / 1_000_000) * 1.2
 
-    expect(calculateLLMCost('gemini-3.6-flash', promptTokens, outputTokens, cachedTokens)).toBeCloseTo(
+    expect(calculateLLMCost('gpt-5.6-luna', promptTokens, outputTokens, cachedTokens)).toBeCloseTo(
       expected,
       12
     )
 
-    const uncached = calculateLLMCost('gemini-3.6-flash', promptTokens, outputTokens)
-    expect(calculateLLMCost('gemini-3.6-flash', promptTokens, outputTokens, cachedTokens)).toBeLessThan(
+    const uncached = calculateLLMCost('gpt-5.6-luna', promptTokens, outputTokens)
+    expect(calculateLLMCost('gpt-5.6-luna', promptTokens, outputTokens, cachedTokens)).toBeLessThan(
       uncached
     )
   })
 
   it('clamps cached tokens to the prompt size', () => {
-    expect(calculateLLMCost('gemini-3.6-flash', 1_000, 0, 5_000)).toBe(
-      calculateLLMCost('gemini-3.6-flash', 1_000, 0, 1_000)
+    expect(calculateLLMCost('gpt-5.6-luna', 1_000, 0, 5_000)).toBe(
+      calculateLLMCost('gpt-5.6-luna', 1_000, 0, 1_000)
     )
-    expect(calculateLLMCost('gemini-3.6-flash', 1_000, 0, -5)).toBe(
-      calculateLLMCost('gemini-3.6-flash', 1_000, 0, 0)
+    expect(calculateLLMCost('gpt-5.6-luna', 1_000, 0, -5)).toBe(
+      calculateLLMCost('gpt-5.6-luna', 1_000, 0, 0)
     )
   })
 
@@ -108,7 +100,7 @@ describe('Model configuration', () => {
   it('calculates LLM cost from configured pricing', () => {
     const inputTokens = 1000
     const outputTokens = 500
-    const expectedCost = (inputTokens / 1_000_000) * 0.3 + (outputTokens / 1_000_000) * 2.5
+    const expectedCost = (inputTokens / 1_000_000) * 0.2 + (outputTokens / 1_000_000) * 1.2
 
     expect(calculateLLMCost(llmModel, inputTokens, outputTokens)).toBe(expectedCost)
   })
@@ -117,13 +109,13 @@ describe('Model configuration', () => {
     expect(getEmbeddingModelConfig(undefined).key).toBe(DEFAULT_EMBEDDING_MODEL_KEY)
     expect(getEmbeddingModelConfig(embeddingModel).config.model).toBe('text-embedding-3-small')
     expect(getLLMModelConfig(undefined).key).toBe(DEFAULT_CHAT_MODEL_KEY)
-    expect(getLLMModelConfig('gemini-3.6-flash').config.model).toBe('gemini-3.6-flash')
+    expect(getLLMModelConfig('gpt-5.6-luna').config.model).toBe('gpt-5.6-luna')
   })
 
   it('rejects unknown configured model keys', () => {
     expect(() => getEmbeddingModelConfig('unsupported-embedding-model')).toThrow(
       'Unknown embedding model key'
     )
-    expect(() => getLLMModelConfig('unsupported-gemini-model')).toThrow('Unknown Gemini model key')
+    expect(() => getLLMModelConfig('unsupported-llm-model')).toThrow('Unknown LLM model key')
   })
 })

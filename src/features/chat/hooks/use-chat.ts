@@ -56,7 +56,7 @@ export const useChat = () => {
   const [error, setError] = useState<string | null>(null);
   const [streamingState, setStreamingState] = useState<StreamingChatState | null>(null);
   // Lets the server replay this conversation's earlier turns verbatim, which is what makes
-  // follow-up questions hit Gemini's context cache.
+  // follow-up questions hit the model's prompt cache.
   const conversationIdRef = useRef<string>(uuidv7());
 
   const sendMessage = async (messageText: string) => {

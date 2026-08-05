@@ -27,7 +27,6 @@
     "test-enrich-voteringar": "cd commands && bun install && bun run test-enrich-voteringar"
   },
   "dependencies": {
-    "@google/generative-ai": "0.24.1",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "deepmerge-ts": "7.1.5",

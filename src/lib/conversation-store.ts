@@ -1,7 +1,7 @@
 /**
  * Per-conversation turn storage for the chat model.
  *
- * Why this exists: Gemini's implicit context caching only pays out when a request shares a
+ * Why this exists: prompt caching only pays out when a request shares a
  * byte-identical *prefix* with a recent one. A chat request is `[systemInstruction, ...history,
  * newTurn]`, so turn N is only cacheable if `history` reproduces exactly what was sent on turn
  * N-1 — including the retrieved source context. Storing only the user's question (or a
@@ -21,7 +21,7 @@ export interface ConversationTurn {
 export const MAX_TURNS_PER_CONVERSATION = 8;
 /** Conversations kept in memory before the least recently used ones are evicted. */
 export const MAX_CONVERSATIONS = 500;
-/** How long an idle conversation survives. Gemini's implicit cache is far shorter lived anyway. */
+/** How long an idle conversation survives. The provider's prompt cache is far shorter lived. */
 export const CONVERSATION_TTL_MS = 30 * 60 * 1000;
 
 interface ConversationEntry {
@@ -55,7 +55,7 @@ const evictOverflow = (): void => {
 
 /**
  * Returns the stored turns for a conversation, or an empty history when there is nothing usable.
- * The returned array is a copy: callers may hand it straight to the Gemini SDK.
+ * The returned array is a copy: callers may hand it straight to the model request builder.
  */
 export const getConversationTurns = (conversationId?: string): ConversationTurn[] => {
   if (!conversationId) {
@@ -95,7 +95,7 @@ export const appendConversationTurn = (
   turns.push({ role: 'user', parts: [{ text: userPrompt }] });
   turns.push({ role: 'model', parts: [{ text: modelAnswer }] });
 
-  // Trim in whole exchanges so history never starts on a model turn, which Gemini rejects.
+  // Trim in whole exchanges so history never starts on an assistant turn.
   if (turns.length > MAX_TURNS_PER_CONVERSATION) {
     turns.splice(0, turns.length - MAX_TURNS_PER_CONVERSATION);
   }

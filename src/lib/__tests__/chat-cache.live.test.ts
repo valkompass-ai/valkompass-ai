@@ -1,22 +1,21 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { Message } from '@/types'
-import type { ChatUsage } from '../gemini-service'
+import type { ChatUsage } from '../chat-service'
 
 /**
- * Live measurement of Gemini context caching over a multi-turn conversation.
+ * Live measurement of OpenAI prompt caching over a multi-turn conversation.
  *
  * Opt-in: it calls the real API and costs tokens.
  *
- *   RUN_LIVE_GEMINI_CACHE_TEST=1 bun run test:run -- src/lib/__tests__/gemini-cache.live.test.ts
+ *   RUN_LIVE_CACHE_TEST=1 bun run test:run -- src/lib/__tests__/chat-cache.live.test.ts
  *
  * What is asserted here is only what the app controls: each follow-up request replays the previous
  * ones verbatim, the prompt is large enough to be cache eligible, and a reported cache hit really
  * does lower the cost. The hit rate itself is logged, not asserted — Gemini's implicit cache is
- * best-effort and misses under load. The deterministic prefix guarantee lives in
- * gemini-service.cache.test.ts.
+ * the provider's to give. The deterministic prefix guarantee lives in chat-service.cache.test.ts.
  */
 
-const LIVE = process.env.RUN_LIVE_GEMINI_CACHE_TEST === '1'
+const LIVE = process.env.RUN_LIVE_CACHE_TEST === '1'
 
 // Retrieval is stubbed so this needs no Neo4j and no embeddings: caching depends on prompt size and
 // byte stability, not on where the text came from. The segment count and length mirror what
@@ -52,7 +51,7 @@ vi.mock('../posthog', () => ({
   trackChatInteraction: vi.fn(),
 }))
 
-const { getGeminiChatResponseStream } = await import('../gemini-service')
+const { getChatResponseStream } = await import('../chat-service')
 
 const TURNS = [
   'Vad tycker partierna om kärnkraft och energipolitik?',
@@ -62,7 +61,7 @@ const TURNS = [
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** The API returns 503 under load; retry so a busy model does not read as a caching regression. */
+/** Retry transient overload so a busy model does not read as a caching regression. */
 const runTurn = async (
   conversationId: string,
   message: Message,
@@ -70,7 +69,7 @@ const runTurn = async (
 ): Promise<ChatUsage> => {
   for (let attempt = 0; attempt < attempts; attempt++) {
     let usage: ChatUsage | undefined
-    await getGeminiChatResponseStream(message, undefined, { type: 'single' }, {
+    await getChatResponseStream(message, undefined, { type: 'single' }, {
       conversationId,
       onUsage: (reported) => {
         usage = reported
