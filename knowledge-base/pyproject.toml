@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "bertopic==0.17.4",
-    "nltk==3.9.4",
+    "nltk==3.10.0",
     "pdfplumber==0.11.9",
     "pydantic==2.13.4",
     "sentence-transformers==5.5.1",
@@ -18,7 +18,7 @@ dependencies = [
     "openai==2.38.0",
     "python-dotenv==1.2.2",
     "spacy==3.8.14",
-    "pip==26.1.1",
+    "pip==26.1.2",
     "neo4j==6.2.0",
 ]
 
