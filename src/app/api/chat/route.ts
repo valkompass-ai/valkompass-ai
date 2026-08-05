@@ -6,6 +6,21 @@ import { v7 as uuidv7 } from 'uuid';
 
 const AGENT_APPROACH = process.env.AGENT_APPROACH || 'multi-step';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The conversation id decides whose earlier turns get replayed into this prompt, so it is never
+ * trusted as sent. It must look like the uuid the client is supposed to generate, and it is
+ * namespaced per requester so a guessed or colliding id cannot reach another visitor's history.
+ */
+function resolveConversationKey(raw: unknown, userId: string): string | undefined {
+  if (typeof raw !== 'string' || !UUID_PATTERN.test(raw)) {
+    return undefined;
+  }
+
+  return `${userId}:${raw}`;
+}
+
 async function chatHandler(req: NextRequest) {
   const userId = getUserId(req);
   
@@ -14,7 +29,7 @@ async function chatHandler(req: NextRequest) {
     const userMessage: Message = body.message;
     const agentConfig = body.agentConfig || undefined;
     const shouldStream = body.stream === true;
-    const conversationId = typeof body.conversationId === 'string' ? body.conversationId : undefined;
+    const conversationId = resolveConversationKey(body.conversationId, userId);
 
     if (!userMessage || typeof userMessage.text !== 'string') {
       return NextResponse.json({ error: "Invalid message format" }, { status: 400 });

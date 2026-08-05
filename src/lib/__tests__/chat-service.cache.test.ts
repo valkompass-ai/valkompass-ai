@@ -14,6 +14,8 @@ interface RecordedRequest {
 
 const recordedRequests: RecordedRequest[] = []
 let answerCounter = 0
+/** Set to simulate a run where reasoning consumed the whole output budget. */
+let emptyAnswer = false
 
 const usage = {
   input_tokens: 12_000,
@@ -37,6 +39,9 @@ vi.mock('openai', () => ({
 
         recordedRequests.push({ input: params.input, promptCacheKey: params.prompt_cache_key })
         answerCounter += 1
+        if (emptyAnswer) {
+          return { output_text: '', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage }
+        }
         return { output_text: `Svar nummer ${answerCounter}`, usage }
       },
     }
@@ -94,6 +99,7 @@ describe('Gemini chat request shape for context caching', () => {
   beforeEach(() => {
     recordedRequests.length = 0
     answerCounter = 0
+    emptyAnswer = false
     clearAllConversations()
   })
 
@@ -151,6 +157,19 @@ describe('Gemini chat request shape for context caching', () => {
 
     expect(recordedRequests[0].input).toHaveLength(1)
     expect(recordedRequests[1].input).toHaveLength(1)
+  })
+
+  it('reports a failure instead of a blank answer when reasoning eats the output budget', async () => {
+    emptyAnswer = true
+
+    const answer = await getChatResponse(userMessage('Fråga'), 'user-1', { type: 'single' }, {
+      conversationId: 'conv-empty',
+    })
+
+    expect(answer).toContain('Sorry')
+    // A blank turn must never enter the history, or every later prompt replays it.
+    const { getConversationTurns } = await import('../conversation-store')
+    expect(getConversationTurns('conv-empty')).toEqual([])
   })
 
   it('tags requests with the conversation id so they share a cache shard', async () => {

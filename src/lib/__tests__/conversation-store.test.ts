@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   CONVERSATION_TTL_MS,
+  MAX_CHARS_PER_CONVERSATION,
   MAX_CONVERSATIONS,
   MAX_TURNS_PER_CONVERSATION,
   appendConversationTurn,
@@ -118,6 +119,31 @@ describe('conversation store', () => {
     expect(getConversationTurns('conv-0')).not.toEqual([])
     expect(getConversationTurns('conv-1')).toEqual([])
     expect(getConversationTurns('conv-overflow')).not.toEqual([])
+  })
+
+  it('drops the oldest exchanges once a conversation exceeds its character budget', () => {
+    const big = 'x'.repeat(MAX_CHARS_PER_CONVERSATION / 3)
+
+    appendConversationTurn('conv-1', `first-${big}`, 'answer-1')
+    appendConversationTurn('conv-1', `second-${big}`, 'answer-2')
+    appendConversationTurn('conv-1', `third-${big}`, 'answer-3')
+
+    const turns = getConversationTurns('conv-1')
+    const chars = turns.reduce((total, turn) => total + turn.parts[0].text.length, 0)
+
+    expect(chars).toBeLessThanOrEqual(MAX_CHARS_PER_CONVERSATION)
+    // Trimming keeps whole exchanges and keeps the newest.
+    expect(turns.length % 2).toBe(0)
+    expect(turns[0].role).toBe('user')
+    expect(turns.at(-1)!.parts[0].text).toBe('answer-3')
+    expect(turns.some((turn) => turn.parts[0].text.startsWith('first-'))).toBe(false)
+  })
+
+  it('never trims below the most recent exchange', () => {
+    const huge = 'x'.repeat(MAX_CHARS_PER_CONVERSATION * 2)
+    appendConversationTurn('conv-1', huge, 'answer')
+
+    expect(getConversationTurns('conv-1')).toHaveLength(2)
   })
 
   it('clears a single conversation', () => {

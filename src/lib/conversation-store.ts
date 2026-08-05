@@ -19,8 +19,13 @@ export interface ConversationTurn {
 
 /** Turns kept per conversation (user + model counted separately). Older ones are dropped. */
 export const MAX_TURNS_PER_CONVERSATION = 8;
+/**
+ * Characters kept per conversation. A stored prompt carries its retrieved context, so turns run
+ * tens of kilobytes each; without this the turn cap alone would let one conversation hold megabytes.
+ */
+export const MAX_CHARS_PER_CONVERSATION = 250_000;
 /** Conversations kept in memory before the least recently used ones are evicted. */
-export const MAX_CONVERSATIONS = 500;
+export const MAX_CONVERSATIONS = 200;
 /** How long an idle conversation survives. The provider's prompt cache is far shorter lived. */
 export const CONVERSATION_TTL_MS = 30 * 60 * 1000;
 
@@ -30,6 +35,9 @@ interface ConversationEntry {
 }
 
 const conversations = new Map<string, ConversationEntry>();
+
+const conversationChars = (turns: ConversationTurn[]): number =>
+  turns.reduce((total, turn) => total + turn.parts.reduce((sum, part) => sum + part.text.length, 0), 0);
 
 const isExpired = (entry: ConversationEntry, now: number): boolean =>
   now - entry.updatedAt > CONVERSATION_TTL_MS;
@@ -95,9 +103,14 @@ export const appendConversationTurn = (
   turns.push({ role: 'user', parts: [{ text: userPrompt }] });
   turns.push({ role: 'model', parts: [{ text: modelAnswer }] });
 
-  // Trim in whole exchanges so history never starts on an assistant turn.
+  // Trim in whole exchanges so history never starts on an assistant turn. Dropping the oldest
+  // exchange costs a cache hit on the next turn, which is the right trade against unbounded memory.
   if (turns.length > MAX_TURNS_PER_CONVERSATION) {
     turns.splice(0, turns.length - MAX_TURNS_PER_CONVERSATION);
+  }
+
+  while (turns.length > 2 && conversationChars(turns) > MAX_CHARS_PER_CONVERSATION) {
+    turns.splice(0, 2);
   }
 
   // Delete first so the re-insert moves this conversation to the tail for LRU eviction.

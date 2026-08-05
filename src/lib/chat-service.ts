@@ -103,6 +103,21 @@ export interface ChatStreamCallbacks extends ChatOptions {
   onAnswerDelta?: (text: string) => void | Promise<void>;
 }
 
+/**
+ * With `max` reasoning effort the model can spend the whole output budget thinking and return no
+ * text. Treat that as a failure rather than handing the user a blank answer, and keep it out of
+ * the conversation store so it cannot poison later turns.
+ */
+const assertAnswered = (text: string, status?: string, reason?: string): string => {
+  if (text.trim()) {
+    return text;
+  }
+
+  throw new Error(
+    `Model returned no answer text (status: ${status ?? 'unknown'}, reason: ${reason ?? 'unknown'})`
+  );
+};
+
 interface OpenAIUsage {
   input_tokens?: number;
   output_tokens?: number;
@@ -349,7 +364,11 @@ export const getChatResponse = async (
           createChatRequest(history, fullPrompt, options.conversationId)
         );
 
-        text = response.output_text ?? "";
+        text = assertAnswered(
+          response.output_text ?? "",
+          response.status,
+          response.incomplete_details?.reason
+        );
         usage = buildUsage(response.usage, fullPrompt, text);
         llmDuration = Date.now() - startTime;
         break; // Success, exit retry loop
@@ -598,7 +617,11 @@ export const getChatResponseStream = async (
     const finalResponse = await stream.finalResponse();
 
     if (!aiResponse) {
-      aiResponse = finalResponse.output_text ?? "";
+      aiResponse = assertAnswered(
+        finalResponse.output_text ?? "",
+        finalResponse.status,
+        finalResponse.incomplete_details?.reason
+      );
       await callbacks.onAnswerDelta?.(aiResponse);
     }
 
