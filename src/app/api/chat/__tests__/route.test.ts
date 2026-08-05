@@ -8,7 +8,6 @@ const TEST_TIMEOUT = 30000
 
 describe('Chat API Integration Tests', () => {
   beforeAll(() => {
-    expect(process.env.GEMINI_API_KEY).toBeDefined()
     expect(process.env.OPENAI_API_KEY).toBeDefined()
     expect(process.env.NEO4J_URI).toBeDefined()
   })

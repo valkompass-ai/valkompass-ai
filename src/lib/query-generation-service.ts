@@ -1,14 +1,14 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
 import { trackLLMCall } from "./posthog";
 
-const API_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = process.env.OPENAI_API_KEY;
 
 if (!API_KEY) {
-  throw new Error("GEMINI_API_KEY is not set in environment variables.");
+  throw new Error("OPENAI_API_KEY is not set in environment variables.");
 }
 
-const genAI = new GoogleGenerativeAI(API_KEY);
+const openai = new OpenAI({ apiKey: API_KEY });
 
 const { key: QUERY_LLM_MODEL_KEY, config: QUERY_LLM_CONFIG } = getLLMModelConfig(
   process.env.QUERY_MODEL_KEY,
@@ -16,15 +16,9 @@ const { key: QUERY_LLM_MODEL_KEY, config: QUERY_LLM_CONFIG } = getLLMModelConfig
 );
 const QUERY_MODEL_NAME = QUERY_LLM_CONFIG.model;
 
-const queryModel = genAI.getGenerativeModel({
-  model: QUERY_MODEL_NAME,
-});
-
 const queryGenerationConfig = {
   temperature: 0.3, // Lower temperature for more focused query generation
-  topK: 1,
-  topP: 1,
-  maxOutputTokens: 1000,
+  maxOutputTokens: QUERY_LLM_CONFIG.maxOutputTokens,
 };
 
 export interface GeneratedQuery {
@@ -122,7 +116,7 @@ Svar:
 
 Användarens fråga: `;
 
-// Rough token estimation (same as in gemini-service)
+// Rough token estimation (same as in chat-service)
 const estimateTokens = (text: string): number => {
   return Math.ceil(text.length / 4);
 };
@@ -145,11 +139,14 @@ export const generateSearchQueries = async (
       const fullPrompt = QUERY_GENERATION_PROMPT + userQuery;
       const estimatedInputTokens = estimateTokens(fullPrompt);
       
-      const geminiStartTime = Date.now();
-      const result = await queryModel.generateContent(fullPrompt);
-      const response = result.response;
-      const text = response.text();
-      const geminiDuration = Date.now() - geminiStartTime;
+      const llmStartTime = Date.now();
+      const result = await openai.responses.create({
+        model: QUERY_MODEL_NAME,
+        input: fullPrompt,
+        max_output_tokens: queryGenerationConfig.maxOutputTokens,
+      });
+      const text = result.output_text ?? '';
+      const llmDuration = Date.now() - llmStartTime;
     
     // Estimate output tokens
     const estimatedOutputTokens = estimateTokens(text);
@@ -162,10 +159,9 @@ export const generateSearchQueries = async (
         inputTokens: estimatedInputTokens,
         outputTokens: estimatedOutputTokens,
         totalTokens: estimatedTotalTokens,
-        duration: geminiDuration,
+        duration: llmDuration,
         cost: estimatedCost,
         success: true,
-        temperature: queryGenerationConfig.temperature,
         maxTokens: queryGenerationConfig.maxOutputTokens,
         messageId,
       });

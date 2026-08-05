@@ -19,18 +19,18 @@ Primary parts:
 Chat flow:
 
 ```text
-ChatInput -> useChat -> /api/chat -> gemini-service -> OpenAI embeddings -> Neo4j vector search -> Gemini answer
+ChatInput -> useChat -> /api/chat -> chat-service -> OpenAI embeddings -> Neo4j vector search -> OpenAI answer
 ```
 
 Important runtime files:
 - `src/app/api/chat/route.ts`: validates requests and selects single-step or multi-step retrieval.
-- `src/lib/gemini-service.ts`: orchestrates retrieval, prompt construction, Gemini calls, retries, and analytics.
+- `src/lib/chat-service.ts`: orchestrates retrieval, prompt construction, OpenAI Responses API calls, retries, and analytics.
 - `src/lib/multi-step-agent-service.ts`: generates multiple targeted search queries and aggregates retrieved context.
 - `src/lib/knowledge-base-service.ts`: queries Neo4j `topic_embedding_idx` and `segment_embedding_idx`.
 - `src/lib/openai-service.ts`: creates `text-embedding-3-small` embeddings with 1536 dimensions.
 - `src/lib/prompt.ts`: source-grounding, citation, Swedish-politics scope, and language rules.
 
-Current app model settings live in `src/types/model-types.ts`. As of this guide, chat and local query generation default to `gemini-3.1-flash-lite`; `gemini-3.5-flash` is available as the higher-quality Flash option. Embeddings use `text-embedding-3-small` with 1536 dimensions.
+Current app model settings live in `src/types/model-types.ts`. As of this guide, chat and query generation both use OpenAI `gpt-5.6-luna` at `max` reasoning effort. Embeddings use `text-embedding-3-small` with 1536 dimensions. The app no longer calls Gemini.
 
 ## Package Managers
 
@@ -93,14 +93,13 @@ bun run fetch-voteringar
 bun run enrich-voteringar
 ```
 
-Prefer targeted tests for the area changed. Full integration tests may require real `GEMINI_API_KEY`, `OPENAI_API_KEY`, and Neo4j credentials.
+Prefer targeted tests for the area changed. Full integration tests may require a real `OPENAI_API_KEY` and Neo4j credentials.
 
 ## Environment
 
 Root app env:
 
 ```bash
-GEMINI_API_KEY=
 OPENAI_API_KEY=
 NEO4J_URI=neo4j://localhost:7687
 NEO4J_USERNAME=
@@ -163,7 +162,7 @@ Data/scripts:
 
 ## Known Pitfalls
 
-- `src/lib/gemini-service.ts` has module-level `chatHistory`; this can leak context across server requests in a long-lived process. Be careful when changing conversation handling.
+- Conversation history lives in `src/lib/conversation-store.ts`, keyed by a client-supplied `conversationId` and held in memory. Replaying turns verbatim is what makes prompt caching work, so do not reformat stored prompts.
 - The docs and README may lag model changes; trust `src/types/model-types.ts` and service code for current model IDs.
 - `bun run dev:turbo` does not run `prepare-kb-documents`; use `bun run dev` if PDF public links need to exist locally.
 - `next lint` is still listed as `bun run lint`; verify before relying on it because Next.js lint behavior has changed across versions.

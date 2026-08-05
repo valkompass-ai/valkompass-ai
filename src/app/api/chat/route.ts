@@ -1,10 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ChatTrace, Message } from "@/types";
-import { getGeminiChatResponse, getGeminiChatResponseStream, AgentApproach } from "@/lib/gemini-service";
+import { getChatResponse, getChatResponseStream, AgentApproach } from "@/lib/chat-service";
 import { withAnalytics, getUserId } from "@/lib/middleware/analytics";
 import { v7 as uuidv7 } from 'uuid';
 
 const AGENT_APPROACH = process.env.AGENT_APPROACH || 'multi-step';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The conversation id decides whose earlier turns get replayed into this prompt, so it is never
+ * trusted as sent. It must look like the uuid the client is supposed to generate, and it is
+ * namespaced per requester so a guessed or colliding id cannot reach another visitor's history.
+ */
+function resolveConversationKey(raw: unknown, userId: string): string | undefined {
+  if (typeof raw !== 'string' || !UUID_PATTERN.test(raw)) {
+    return undefined;
+  }
+
+  return `${userId}:${raw}`;
+}
 
 async function chatHandler(req: NextRequest) {
   const userId = getUserId(req);
@@ -14,6 +29,7 @@ async function chatHandler(req: NextRequest) {
     const userMessage: Message = body.message;
     const agentConfig = body.agentConfig || undefined;
     const shouldStream = body.stream === true;
+    const conversationId = resolveConversationKey(body.conversationId, userId);
 
     if (!userMessage || typeof userMessage.text !== 'string') {
       return NextResponse.json({ error: "Invalid message format" }, { status: 400 });
@@ -23,11 +39,13 @@ async function chatHandler(req: NextRequest) {
     const agentApproach: AgentApproach = determineAgentApproach(userMessage, agentConfig);
 
     if (shouldStream) {
-      return createChatStreamResponse(userMessage, userId, agentApproach);
+      return createChatStreamResponse(userMessage, userId, agentApproach, conversationId);
     }
-    
-    // Use consolidated gemini service with agent approach
-    const aiTextResponse = await getGeminiChatResponse(userMessage, userId, agentApproach);
+
+    // Use consolidated chat service with agent approach
+    const aiTextResponse = await getChatResponse(userMessage, userId, agentApproach, {
+      conversationId,
+    });
 
     const aiResponse: Message = {
       id: uuidv7(),
@@ -52,7 +70,8 @@ async function chatHandler(req: NextRequest) {
 function createChatStreamResponse(
   userMessage: Message,
   userId: string,
-  agentApproach: AgentApproach
+  agentApproach: AgentApproach,
+  conversationId?: string
 ): NextResponse {
   const encoder = new TextEncoder();
 
@@ -65,11 +84,12 @@ function createChatStreamResponse(
 
       void (async () => {
         try {
-          const aiTextResponse = await getGeminiChatResponseStream(
+          const aiTextResponse = await getChatResponseStream(
             userMessage,
             userId,
             agentApproach,
             {
+              conversationId,
               onTraceUpdate: (trace) => {
                 latestTrace = trace;
                 send({ type: 'trace', trace });

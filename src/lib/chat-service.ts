@@ -1,19 +1,25 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import { getOpenAIEmbedding } from "./openai-service";
 import { getContextFromKB, RetrievedContext, RetrievedSegment } from "./knowledge-base-service";
 import { getMultiStepContext, MultiStepAgentConfig, MultiStepRetrievalResult } from "./multi-step-agent-service";
 import { SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_NO_CONTEXT } from "./prompt";
+import { appendConversationTurn, getConversationTurns } from "./conversation-store";
 import { trackLLMCall, trackChatInteraction } from "./posthog";
 import { ChatTrace, ChatTraceQuery, ChatTraceSource, Message } from "@/types";
-import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
+import {
+  DEFAULT_QUERY_MODEL_KEY,
+  ReasoningEffort,
+  calculateLLMCost,
+  getLLMModelConfig,
+} from "@/types/model-types";
 
-const API_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = process.env.OPENAI_API_KEY;
 
 if (!API_KEY) {
-  throw new Error("GEMINI_API_KEY is not set in environment variables.");
+  throw new Error("OPENAI_API_KEY is not set in environment variables.");
 }
 
-const genAI = new GoogleGenerativeAI(API_KEY);
+const openai = new OpenAI({ apiKey: API_KEY });
 
 const { key: LLM_MODEL_KEY, config: LLM_CONFIG } = getLLMModelConfig(process.env.CHAT_MODEL_KEY);
 const { config: LLM_CONFIG_QUERY } = getLLMModelConfig(
@@ -22,25 +28,33 @@ const { config: LLM_CONFIG_QUERY } = getLLMModelConfig(
 );
 const MODEL_NAME = LLM_CONFIG.model;
 
-const model = genAI.getGenerativeModel({
-  model: MODEL_NAME,
-});
+const asReasoningEffort = (value: string | undefined, fallback: ReasoningEffort): ReasoningEffort =>
+  value === 'low' || value === 'medium' || value === 'high' || value === 'max' ? value : fallback;
 
-const queryModel = genAI.getGenerativeModel({
-  model: LLM_CONFIG_QUERY.model,
-});
+/**
+ * The Responses API accepts and echoes back `effort: "max"` on gpt-5.6-luna, but the pinned SDK's
+ * union stops at "xhigh". Cast at this single boundary rather than downgrading the effort.
+ */
+type SdkReasoning = { effort: 'low' | 'medium' | 'high' };
+const toSdkReasoning = (effort: ReasoningEffort): SdkReasoning => ({ effort }) as unknown as SdkReasoning;
+
+const REASONING_EFFORT = asReasoningEffort(process.env.CHAT_REASONING_EFFORT, LLM_CONFIG.reasoningEffort);
+/**
+ * Query generation is a small JSON task on the critical path of every question. It defaults to the
+ * model's effort like chat does, but is separately tunable because reasoning time is latency here.
+ */
+const QUERY_REASONING_EFFORT = asReasoningEffort(
+  process.env.QUERY_REASONING_EFFORT,
+  LLM_CONFIG_QUERY.reasoningEffort
+);
 
 const generationConfig = {
   temperature: 0.7, // Slightly lower temperature for more factual RAG responses
-  topK: 1,
-  topP: 1,
   maxOutputTokens: LLM_CONFIG.maxOutputTokens,
+  reasoningEffort: REASONING_EFFORT,
 };
 
-// Chat history stores user queries and final RAG answers
-const chatHistory: { role: "user" | "model"; parts: { text: string }[] }[] = [];
-
-// Token estimation for cost tracking
+// Token estimation, only used as a fallback when the API reports no usage metadata
 const estimateTokens = (text: string): number => {
   // Very rough approximation: 1 token ≈ 4 characters for English text
   return Math.ceil(text.length / 4);
@@ -56,10 +70,99 @@ export interface AgentApproach {
   config?: MultiStepAgentConfig;
 }
 
-export interface ChatStreamCallbacks {
+/** Token accounting for one chat completion, read from the API's reported usage. */
+export interface ChatUsage {
+  /** Full prompt size. Cached tokens are counted inside this number as well. */
+  promptTokens: number;
+  /** Share of the prompt served from the context cache, billed at the reduced cache rate. */
+  cachedPromptTokens: number;
+  outputTokens: number;
+  /** Tokens the model spent thinking. Billed at the output rate. */
+  reasoningTokens: number;
+  totalTokens: number;
+  /** cachedPromptTokens / promptTokens, 0 when nothing was cached. */
+  cacheHitRate: number;
+  /** Whether the prompt was large enough for the model to be cache eligible at all. */
+  cacheEligible: boolean;
+  cost: number;
+  /** What the same call would have cost with no cache hit, for measuring the saving. */
+  costWithoutCache: number;
+}
+
+export interface ChatOptions {
+  /**
+   * Groups the turns of one chat. The previous turns are replayed verbatim, which is what lets
+   * OpenAI serve the shared prefix from its prompt cache on follow-up questions.
+   */
+  conversationId?: string;
+  onUsage?: (usage: ChatUsage) => void | Promise<void>;
+}
+
+export interface ChatStreamCallbacks extends ChatOptions {
   onTraceUpdate?: (trace: ChatTrace) => void | Promise<void>;
   onAnswerDelta?: (text: string) => void | Promise<void>;
 }
+
+/**
+ * With `max` reasoning effort the model can spend the whole output budget thinking and return no
+ * text. Treat that as a failure rather than handing the user a blank answer, and keep it out of
+ * the conversation store so it cannot poison later turns.
+ */
+const assertAnswered = (text: string, status?: string, reason?: string): string => {
+  if (text.trim()) {
+    return text;
+  }
+
+  throw new Error(
+    `Model returned no answer text (status: ${status ?? 'unknown'}, reason: ${reason ?? 'unknown'})`
+  );
+};
+
+interface OpenAIUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  input_tokens_details?: { cached_tokens?: number };
+  output_tokens_details?: { reasoning_tokens?: number };
+}
+
+const buildUsage = (
+  usage: OpenAIUsage | undefined,
+  promptText: string,
+  answerText: string
+): ChatUsage => {
+  const promptTokens = usage?.input_tokens ?? estimateTokens(promptText);
+  const reasoningTokens = usage?.output_tokens_details?.reasoning_tokens ?? 0;
+  // OpenAI counts reasoning tokens inside output_tokens.
+  const billedOutputTokens = usage?.output_tokens ?? estimateTokens(answerText);
+  const outputTokens = Math.max(billedOutputTokens - reasoningTokens, 0);
+  const cachedPromptTokens = Math.min(usage?.input_tokens_details?.cached_tokens ?? 0, promptTokens);
+
+  return {
+    promptTokens,
+    cachedPromptTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens: usage?.total_tokens ?? promptTokens + billedOutputTokens,
+    cacheHitRate: promptTokens > 0 ? cachedPromptTokens / promptTokens : 0,
+    cacheEligible: promptTokens >= LLM_CONFIG.implicitCacheMinTokens,
+    cost: calculateLLMCost(LLM_MODEL_KEY, promptTokens, billedOutputTokens, cachedPromptTokens),
+    costWithoutCache: calculateLLMCost(LLM_MODEL_KEY, promptTokens, billedOutputTokens, 0),
+  };
+};
+
+const usageTrackingProperties = (usage: ChatUsage) => ({
+  inputTokens: usage.promptTokens,
+  outputTokens: usage.outputTokens,
+  totalTokens: usage.totalTokens,
+  cachedInputTokens: usage.cachedPromptTokens,
+  cacheHitRate: usage.cacheHitRate,
+  cacheEligible: usage.cacheEligible,
+  reasoningTokens: usage.reasoningTokens,
+  cost: usage.cost,
+  costWithoutCache: usage.costWithoutCache,
+  cacheSavingsUsd: usage.costWithoutCache - usage.cost,
+});
 
 const formatContextForPrompt = (context: RetrievedContext, isMultiStep: boolean = false): string => {
   let formattedContext = `Relevant Topic: ${context.topicName}\nDescription: ${context.topicDescription}\n\n`;
@@ -90,7 +193,7 @@ const buildPrompt = (
   fullPrompt: string;
   systemInstruction: string;
 } => {
-  let promptForGemini = "";
+  let promptForModel = "";
   let systemInstruction = SYSTEM_INSTRUCTION;
 
   const historyContext = message.history && message.history.trim()
@@ -99,16 +202,58 @@ const buildPrompt = (
 
   if (retrievedContext && (retrievedContext.segments.length > 0 || retrievedContext.topicName)) {
     const formattedContext = formatContextForPrompt(retrievedContext, agentApproach.type === 'multi-step');
-    promptForGemini = `Context:\n${formattedContext}${historyContext}User Question: ${message.text}\n\nAnswer:`;
+    promptForModel = `Context:\n${formattedContext}${historyContext}User Question: ${message.text}\n\nAnswer:`;
   } else {
-    promptForGemini = historyContext + message.text;
+    promptForModel = historyContext + message.text;
     systemInstruction = SYSTEM_INSTRUCTION_NO_CONTEXT;
   }
 
   return {
-    fullPrompt: systemInstruction + "\n\n" + promptForGemini,
+    fullPrompt: systemInstruction + "\n\n" + promptForModel,
     systemInstruction,
   };
+};
+
+/**
+ * Turns stored history plus the new prompt into Responses API input. Replaying earlier turns
+ * verbatim keeps the prefix byte-identical, which is what OpenAI's prompt cache matches on.
+ */
+const toResponseInput = (
+  history: { role: 'user' | 'model'; parts: { text: string }[] }[],
+  prompt: string
+) => [
+  ...history.map((turn) => ({
+    role: turn.role === 'model' ? ('assistant' as const) : ('user' as const),
+    content: turn.parts.map((part) => part.text).join(''),
+  })),
+  { role: 'user' as const, content: prompt },
+];
+
+const createChatRequest = (
+  history: { role: 'user' | 'model'; parts: { text: string }[] }[],
+  prompt: string,
+  conversationId?: string
+) => ({
+  model: MODEL_NAME,
+  input: toResponseInput(history, prompt),
+  reasoning: toSdkReasoning(generationConfig.reasoningEffort),
+  max_output_tokens: generationConfig.maxOutputTokens,
+  // Routes same-conversation requests to the same cache shard, improving the hit rate.
+  ...(conversationId ? { prompt_cache_key: conversationId } : {}),
+});
+
+/** Adapter so the multi-step agent keeps its provider-agnostic `generateContent` shape. */
+const queryModel = {
+  generateContent: async (prompt: string) => {
+    const response = await openai.responses.create({
+      model: LLM_CONFIG_QUERY.model,
+      input: prompt,
+      reasoning: toSdkReasoning(QUERY_REASONING_EFFORT),
+      max_output_tokens: LLM_CONFIG_QUERY.maxOutputTokens,
+    });
+
+    return { response: { text: () => response.output_text ?? '' } };
+  },
 };
 
 const getRetrievedContext = async (
@@ -185,19 +330,11 @@ const cloneTrace = (trace: ChatTrace): ChatTrace => ({
   sources: [...trace.sources],
 });
 
-const updateChatHistory = (userText: string, aiText: string) => {
-  chatHistory.push({ role: "user", parts: [{ text: userText }] });
-  chatHistory.push({ role: "model", parts: [{ text: aiText }] });
-
-  if (chatHistory.length > 10) {
-    chatHistory.splice(0, chatHistory.length - 10);
-  }
-};
-
-export const getGeminiChatResponse = async (
-  message: Message, 
+export const getChatResponse = async (
+  message: Message,
   distinctId?: string,
-  agentApproach: AgentApproach = { type: 'single' }
+  agentApproach: AgentApproach = { type: 'single' },
+  options: ChatOptions = {}
 ): Promise<string> => {
   const overallStartTime = Date.now();
   let retrievedContext: RetrievedContext | null = null;
@@ -212,60 +349,59 @@ export const getGeminiChatResponse = async (
     multiStepResult = contextResult.multiStepResult;
     
     const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
-    const estimatedInputTokens = estimateTokens(fullPrompt);
-    
-    // Step 3: Generate response with Gemini (with retry logic)
+    const history = getConversationTurns(options.conversationId);
+
+    // Step 3: Generate the response (with retry logic)
     let text = "";
-    let geminiDuration = 0;
-    let lastGeminiError: Error | null = null;
-    
+    let usage: ChatUsage | null = null;
+    let llmDuration = 0;
+    let lastError: Error | null = null;
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const geminiStartTime = Date.now();
-        const chat = model.startChat({
-          generationConfig,
-          history: [...chatHistory],
-        });
+        const startTime = Date.now();
+        const response = await openai.responses.create(
+          createChatRequest(history, fullPrompt, options.conversationId)
+        );
 
-        const result = await chat.sendMessage(fullPrompt);
-        const response = result.response;
-        text = response.text();
-        geminiDuration = Date.now() - geminiStartTime;
+        text = assertAnswered(
+          response.output_text ?? "",
+          response.status,
+          response.incomplete_details?.reason
+        );
+        usage = buildUsage(response.usage, fullPrompt, text);
+        llmDuration = Date.now() - startTime;
         break; // Success, exit retry loop
-        
-      } catch (geminiError) {
-        lastGeminiError = geminiError instanceof Error ? geminiError : new Error('Unknown Gemini error');
-        
+
+      } catch (llmError) {
+        lastError = llmError instanceof Error ? llmError : new Error('Unknown LLM error');
+
         // Check if this is a retryable error
-        const isRetryable = lastGeminiError.message.includes('overloaded') || 
-                           lastGeminiError.message.includes('503') ||
-                           lastGeminiError.message.includes('429') ||
-                           lastGeminiError.message.includes('timeout');
-        
+        const isRetryable = lastError.message.includes('overloaded') ||
+                           lastError.message.includes('503') ||
+                           lastError.message.includes('429') ||
+                           lastError.message.includes('timeout');
+
         if (isRetryable && attempt < MAX_RETRIES) {
           const delayMs = RETRY_DELAY_MS * Math.pow(2, attempt);
           await delay(delayMs);
           continue;
         }
-        
+
         // If not retryable or max retries reached, throw the error
-        throw lastGeminiError;
+        throw lastError;
       }
     }
-    
-    // Step 4: Calculate metrics and track usage
-    const estimatedOutputTokens = estimateTokens(text);
-    const estimatedTotalTokens = estimatedInputTokens + estimatedOutputTokens;
-    const estimatedCost = calculateLLMCost(LLM_MODEL_KEY, estimatedInputTokens, estimatedOutputTokens);
 
-    // Track Gemini API call
+    // Step 4: Calculate metrics and track usage
+    const resolvedUsage = usage ?? buildUsage(undefined, fullPrompt, text);
+    await options.onUsage?.(resolvedUsage);
+
+    // Track the LLM call
     if (distinctId) {
       await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion', {
-        inputTokens: estimatedInputTokens,
-        outputTokens: estimatedOutputTokens,
-        totalTokens: estimatedTotalTokens,
-        duration: geminiDuration,
-        cost: estimatedCost,
+        ...usageTrackingProperties(resolvedUsage),
+        duration: llmDuration,
         success: true,
         temperature: generationConfig.temperature,
         maxTokens: generationConfig.maxOutputTokens,
@@ -273,7 +409,7 @@ export const getGeminiChatResponse = async (
       });
     }
 
-    updateChatHistory(message.text, text);
+    appendConversationTurn(options.conversationId, fullPrompt, text);
 
     aiResponse = text;
     return text;
@@ -354,7 +490,7 @@ export const getGeminiChatResponse = async (
   }
 };
 
-export const getGeminiChatResponseStream = async (
+export const getChatResponseStream = async (
   message: Message,
   distinctId?: string,
   agentApproach: AgentApproach = { type: 'single' },
@@ -458,45 +594,45 @@ export const getGeminiChatResponseStream = async (
     }
 
     const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
-    const estimatedInputTokens = estimateTokens(fullPrompt);
-    const geminiStartTime = Date.now();
+    const history = getConversationTurns(callbacks.conversationId);
+    const startTime = Date.now();
 
-    const chat = model.startChat({
-      generationConfig,
-      history: [...chatHistory],
-    });
+    const stream = await openai.responses.stream(
+      createChatRequest(history, fullPrompt, callbacks.conversationId)
+    );
 
-    const result = await chat.sendMessageStream(fullPrompt);
     await addTraceEvent("Skriver svaret");
 
-    for await (const chunk of result.stream) {
-      const delta = chunk.text();
-      if (!delta) {
-        continue;
-      }
+    let streamUsage: OpenAIUsage | undefined;
 
-      aiResponse += delta;
-      await callbacks.onAnswerDelta?.(delta);
+    for await (const event of stream) {
+      if (event.type === 'response.output_text.delta' && event.delta) {
+        aiResponse += event.delta;
+        await callbacks.onAnswerDelta?.(event.delta);
+      } else if (event.type === 'response.completed') {
+        streamUsage = event.response.usage;
+      }
     }
 
+    const finalResponse = await stream.finalResponse();
+
     if (!aiResponse) {
-      const response = await result.response;
-      aiResponse = response.text();
+      aiResponse = assertAnswered(
+        finalResponse.output_text ?? "",
+        finalResponse.status,
+        finalResponse.incomplete_details?.reason
+      );
       await callbacks.onAnswerDelta?.(aiResponse);
     }
 
-    const geminiDuration = Date.now() - geminiStartTime;
-    const estimatedOutputTokens = estimateTokens(aiResponse);
-    const estimatedTotalTokens = estimatedInputTokens + estimatedOutputTokens;
-    const estimatedCost = calculateLLMCost(LLM_MODEL_KEY, estimatedInputTokens, estimatedOutputTokens);
+    const llmDuration = Date.now() - startTime;
+    const usage = buildUsage(streamUsage ?? finalResponse.usage, fullPrompt, aiResponse);
+    await callbacks.onUsage?.(usage);
 
     if (distinctId) {
       await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion_stream', {
-        inputTokens: estimatedInputTokens,
-        outputTokens: estimatedOutputTokens,
-        totalTokens: estimatedTotalTokens,
-        duration: geminiDuration,
-        cost: estimatedCost,
+        ...usageTrackingProperties(usage),
+        duration: llmDuration,
         success: true,
         temperature: generationConfig.temperature,
         maxTokens: generationConfig.maxOutputTokens,
@@ -504,7 +640,7 @@ export const getGeminiChatResponseStream = async (
       });
     }
 
-    updateChatHistory(message.text, aiResponse);
+    appendConversationTurn(callbacks.conversationId, fullPrompt, aiResponse);
     trace.status = 'complete';
     await emitTrace();
     return aiResponse;

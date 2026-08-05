@@ -380,6 +380,7 @@ async def main():
         print("Processing party entities...")
         process_party_entities(schema_manager)
         print("Party entities processed successfully.")
+        processed_something = True
 
     if "graph-clear" in args.actions:
         schema_manager = SchemaManager(
@@ -389,10 +390,11 @@ async def main():
         )
         print("Starting graph operations...")
         schema_manager.clear_database()
+        processed_something = True
 
     if not processed_something:
         print(
-            "No actions were performed. Please specify --actions parse or --actions embed."
+            "No actions were performed. Please specify one or more valid --actions."
         )
     else:
         print("Knowledge base processing complete.")

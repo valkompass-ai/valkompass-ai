@@ -30,7 +30,7 @@ export default function HomePage() {
                 Valkompass.ai samlar in partiernas officiella dokument, som partiprogram, valmanifest, voteringshistorik, riksdagsutlåtanden, arbetsgruppsrapporter och andra protokoll från offentliga sammanhang.
               </p>
               <p className="text-base sm:text-lg md:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed px-2">
-                Dessa dokument används av en AI-modell (Gemini 2.5 Flash) som analyserar innehållet och gör det möjligt för dig att ställa frågor och föra samtal med partiernas ståndpunkter som grund.
+                Dessa dokument används av en AI-modell (OpenAI GPT-5.6 Luna) som analyserar innehållet och gör det möjligt för dig att ställa frågor och föra samtal med partiernas ståndpunkter som grund.
               </p>
               <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto leading-relaxed px-2 pt-4">
                 Allt vi gör är open source. För kod och mer information, <a href="https://github.com/valkompass-ai/valkompass-ai" className="text-blue-500 hover:text-blue-600 underline touch-manipulation" target="_blank" rel="noopener noreferrer">besök vårt GitHub-repo</a>.

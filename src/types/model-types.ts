@@ -13,12 +13,16 @@ export interface EmbeddingModelConfig {
   };
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'max';
+
 export interface LLMModelConfig {
   name: string;
-  provider: 'google';
+  provider: 'openai';
   model: string;
   contextWindow: number;
   maxOutputTokens: number;
+  /** Reasoning models spend output tokens on thinking, so this must leave room for both. */
+  reasoningEffort: ReasoningEffort;
   cost: {
     inputCostPer1MTokens: {
       standard: number;
@@ -28,10 +32,17 @@ export interface LLMModelConfig {
       standard: number;
       longContext: number;
     };
+    /** Price for prompt tokens served from the prompt cache. */
+    cachedInputCostPer1MTokens: number;
     currency: 'USD';
     lastUpdated: string;
     sourceUrl: string;
   };
+  /**
+   * Minimum prompt size before the model is eligible for prompt caching.
+   * Requests below this never report cached tokens, regardless of prefix reuse.
+   */
+  implicitCacheMinTokens: number;
 }
 
 export const EMBEDDING_MODELS = {
@@ -52,45 +63,29 @@ export const EMBEDDING_MODELS = {
 } as const satisfies Record<string, EmbeddingModelConfig>;
 
 export const LLM_MODELS = {
-  'gemini-3.1-flash-lite': {
-    name: 'Google Gemini 3.1 Flash-Lite',
-    provider: 'google',
-    model: 'gemini-3.1-flash-lite',
-    contextWindow: 1_048_576,
-    maxOutputTokens: 65_536,
+  'gpt-5.6-luna': {
+    name: 'OpenAI GPT-5.6 Luna',
+    provider: 'openai',
+    model: 'gpt-5.6-luna',
+    contextWindow: 400_000,
+    maxOutputTokens: 32_768,
+    reasoningEffort: 'max',
     cost: {
       inputCostPer1MTokens: {
-        standard: 0.25,
-        longContext: 0.25,
+        standard: 0.20,
+        longContext: 0.20,
       },
       outputCostPer1MTokens: {
-        standard: 1.50,
-        longContext: 1.50,
+        standard: 1.20,
+        longContext: 1.20,
       },
+      cachedInputCostPer1MTokens: 0.02,
       currency: 'USD',
-      lastUpdated: '2026-05-31',
-      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+      lastUpdated: '2026-08-05',
+      sourceUrl: 'https://developers.openai.com/api/docs/pricing',
     },
-  },
-  'gemini-3.5-flash': {
-    name: 'Google Gemini 3.5 Flash',
-    provider: 'google',
-    model: 'gemini-3.5-flash',
-    contextWindow: 1_048_576,
-    maxOutputTokens: 65_536,
-    cost: {
-      inputCostPer1MTokens: {
-        standard: 1.50,
-        longContext: 1.50,
-      },
-      outputCostPer1MTokens: {
-        standard: 9.00,
-        longContext: 9.00,
-      },
-      currency: 'USD',
-      lastUpdated: '2026-05-31',
-      sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
-    },
+    // OpenAI caches prompt prefixes from 1024 tokens upward.
+    implicitCacheMinTokens: 1024,
   },
 } as const satisfies Record<string, LLMModelConfig>;
 
@@ -98,8 +93,8 @@ export type EmbeddingModelKey = keyof typeof EMBEDDING_MODELS;
 export type LLMModelKey = keyof typeof LLM_MODELS;
 
 export const DEFAULT_EMBEDDING_MODEL_KEY: EmbeddingModelKey = 'text-embedding-3-small';
-export const DEFAULT_CHAT_MODEL_KEY: LLMModelKey = 'gemini-3.1-flash-lite';
-export const DEFAULT_QUERY_MODEL_KEY: LLMModelKey = 'gemini-3.1-flash-lite';
+export const DEFAULT_CHAT_MODEL_KEY: LLMModelKey = 'gpt-5.6-luna';
+export const DEFAULT_QUERY_MODEL_KEY: LLMModelKey = 'gpt-5.6-luna';
 
 export function isEmbeddingModelKey(modelKey: string): modelKey is EmbeddingModelKey {
   return modelKey in EMBEDDING_MODELS;
@@ -135,7 +130,7 @@ export function getLLMModelConfig(
   const resolvedKey = modelKey || fallbackKey;
 
   if (!isLLMModelKey(resolvedKey)) {
-    throw new Error(`Unknown Gemini model key: ${resolvedKey}`);
+    throw new Error(`Unknown LLM model key: ${resolvedKey}`);
   }
 
   return {
@@ -153,10 +148,18 @@ export function calculateEmbeddingCost(
   return (estimatedTokens / 1000) * model.cost.inputCostPer1KTokens;
 }
 
+/**
+ * Cost for one LLM call.
+ *
+ * `inputTokens` is the full prompt size (the API's `input_tokens`, which already includes cached
+ * tokens). `cachedInputTokens` is the share of that prompt served from the prompt cache
+ * (`input_tokens_details.cached_tokens`); it is billed at the much lower cache rate.
+ */
 export function calculateLLMCost(
   modelKey: LLMModelKey,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  cachedInputTokens: number = 0
 ): number {
   const model = LLM_MODELS[modelKey];
   const isLongContext = inputTokens > 128_000;
@@ -167,5 +170,12 @@ export function calculateLLMCost(
     ? model.cost.outputCostPer1MTokens.longContext
     : model.cost.outputCostPer1MTokens.standard;
 
-  return (inputTokens / 1_000_000) * inputRate + (outputTokens / 1_000_000) * outputRate;
+  const cachedTokens = Math.min(Math.max(cachedInputTokens, 0), inputTokens);
+  const uncachedTokens = inputTokens - cachedTokens;
+
+  return (
+    (uncachedTokens / 1_000_000) * inputRate +
+    (cachedTokens / 1_000_000) * model.cost.cachedInputCostPer1MTokens +
+    (outputTokens / 1_000_000) * outputRate
+  );
 }
