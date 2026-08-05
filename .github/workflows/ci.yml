@@ -81,7 +81,6 @@ jobs:
           NEO4J_USERNAME: neo4j
           NEO4J_PASSWORD: test-password
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY || 'dummy-key' }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST || 'https://eu.i.posthog.com' }}
           APP_DOMAIN: http://localhost:3000
@@ -94,7 +93,6 @@ jobs:
           NEO4J_USERNAME: neo4j
           NEO4J_PASSWORD: test-password
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY || 'dummy-key' }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST || 'https://eu.i.posthog.com' }}
           APP_DOMAIN: http://localhost:3000
