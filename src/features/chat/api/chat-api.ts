@@ -11,13 +11,16 @@ type ChatStreamEvent =
   | { type: 'complete'; message: Message }
   | { type: 'error'; error: string };
 
-export const sendMessageToApi = async (userMessage: Message): Promise<Message> => {
+export const sendMessageToApi = async (
+  userMessage: Message,
+  conversationId?: string
+): Promise<Message> => {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ message: userMessage }),
+    body: JSON.stringify({ message: userMessage, conversationId }),
   });
 
   if (!response.ok) {
@@ -35,7 +38,8 @@ export const sendMessageToApi = async (userMessage: Message): Promise<Message> =
 
 export const streamMessageFromApi = async (
   userMessage: Message,
-  handlers: ChatStreamHandlers = {}
+  handlers: ChatStreamHandlers = {},
+  conversationId?: string
 ): Promise<Message> => {
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -43,7 +47,7 @@ export const streamMessageFromApi = async (
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({ message: userMessage, stream: true }),
+    body: JSON.stringify({ message: userMessage, conversationId, stream: true }),
   });
 
   if (!response.ok) {
@@ -51,7 +55,7 @@ export const streamMessageFromApi = async (
   }
 
   if (!response.body) {
-    return sendMessageToApi(userMessage);
+    return sendMessageToApi(userMessage, conversationId);
   }
 
   const reader = response.body.getReader();

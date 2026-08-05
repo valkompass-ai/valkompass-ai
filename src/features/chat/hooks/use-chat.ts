@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ChatTrace, Message } from '@/types';
 import { streamMessageFromApi } from '../api/chat-api';
 import { v7 as uuidv7 } from 'uuid';
@@ -55,6 +55,9 @@ export const useChat = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [streamingState, setStreamingState] = useState<StreamingChatState | null>(null);
+  // Lets the server replay this conversation's earlier turns verbatim, which is what makes
+  // follow-up questions hit Gemini's context cache.
+  const conversationIdRef = useRef<string>(uuidv7());
 
   const sendMessage = async (messageText: string) => {
     // Format current chat history for this message
@@ -77,20 +80,24 @@ export const useChat = () => {
     });
 
     try {
-      const aiMessage = await streamMessageFromApi(newUserMessage, {
-        onTrace: (trace) => {
-          setStreamingState((current) => ({
-            trace,
-            answer: current?.answer ?? '',
-          }));
+      const aiMessage = await streamMessageFromApi(
+        newUserMessage,
+        {
+          onTrace: (trace) => {
+            setStreamingState((current) => ({
+              trace,
+              answer: current?.answer ?? '',
+            }));
+          },
+          onAnswerDelta: (text) => {
+            setStreamingState((current) => ({
+              trace: current?.trace ?? null,
+              answer: (current?.answer ?? '') + text,
+            }));
+          },
         },
-        onAnswerDelta: (text) => {
-          setStreamingState((current) => ({
-            trace: current?.trace ?? null,
-            answer: (current?.answer ?? '') + text,
-          }));
-        },
-      });
+        conversationIdRef.current
+      );
       setMessages((prevMessages) => [...prevMessages, aiMessage]);
     } catch (e) {
       const err = e as Error;
@@ -113,6 +120,8 @@ export const useChat = () => {
     setMessages([]);
     setError(null);
     setStreamingState(null);
+    // Start a fresh server-side conversation so cleared turns are not replayed.
+    conversationIdRef.current = uuidv7();
   };
 
   return {

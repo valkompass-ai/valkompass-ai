@@ -14,6 +14,7 @@ async function chatHandler(req: NextRequest) {
     const userMessage: Message = body.message;
     const agentConfig = body.agentConfig || undefined;
     const shouldStream = body.stream === true;
+    const conversationId = typeof body.conversationId === 'string' ? body.conversationId : undefined;
 
     if (!userMessage || typeof userMessage.text !== 'string') {
       return NextResponse.json({ error: "Invalid message format" }, { status: 400 });
@@ -23,11 +24,13 @@ async function chatHandler(req: NextRequest) {
     const agentApproach: AgentApproach = determineAgentApproach(userMessage, agentConfig);
 
     if (shouldStream) {
-      return createChatStreamResponse(userMessage, userId, agentApproach);
+      return createChatStreamResponse(userMessage, userId, agentApproach, conversationId);
     }
-    
+
     // Use consolidated gemini service with agent approach
-    const aiTextResponse = await getGeminiChatResponse(userMessage, userId, agentApproach);
+    const aiTextResponse = await getGeminiChatResponse(userMessage, userId, agentApproach, {
+      conversationId,
+    });
 
     const aiResponse: Message = {
       id: uuidv7(),
@@ -52,7 +55,8 @@ async function chatHandler(req: NextRequest) {
 function createChatStreamResponse(
   userMessage: Message,
   userId: string,
-  agentApproach: AgentApproach
+  agentApproach: AgentApproach,
+  conversationId?: string
 ): NextResponse {
   const encoder = new TextEncoder();
 
@@ -70,6 +74,7 @@ function createChatStreamResponse(
             userId,
             agentApproach,
             {
+              conversationId,
               onTraceUpdate: (trace) => {
                 latestTrace = trace;
                 send({ type: 'trace', trace });

@@ -19,7 +19,7 @@ describe('Model configuration', () => {
 
   it('uses current default model keys', () => {
     expect(DEFAULT_EMBEDDING_MODEL_KEY).toBe('text-embedding-3-small')
-    expect(DEFAULT_CHAT_MODEL_KEY).toBe('gemini-3.1-flash-lite')
+    expect(DEFAULT_CHAT_MODEL_KEY).toBe('gemini-3.6-flash')
     expect(DEFAULT_QUERY_MODEL_KEY).toBe('gemini-3.1-flash-lite')
   })
 
@@ -37,7 +37,7 @@ describe('Model configuration', () => {
   })
 
   it('has only current Gemini model configurations', () => {
-    expect(Object.keys(LLM_MODELS)).toEqual(['gemini-3.1-flash-lite', 'gemini-3.5-flash'])
+    expect(Object.keys(LLM_MODELS)).toEqual(['gemini-3.1-flash-lite', 'gemini-3.6-flash'])
 
     const flashLite = LLM_MODELS['gemini-3.1-flash-lite']
     expect(flashLite.model).toBe('gemini-3.1-flash-lite')
@@ -45,11 +45,55 @@ describe('Model configuration', () => {
     expect(flashLite.maxOutputTokens).toBe(65_536)
     expect(flashLite.cost.inputCostPer1MTokens.standard).toBe(0.25)
     expect(flashLite.cost.outputCostPer1MTokens.standard).toBe(1.5)
+    expect(flashLite.cost.cachedInputCostPer1MTokens).toBe(0.025)
 
-    const flash = LLM_MODELS['gemini-3.5-flash']
-    expect(flash.model).toBe('gemini-3.5-flash')
+    const flash = LLM_MODELS['gemini-3.6-flash']
+    expect(flash.model).toBe('gemini-3.6-flash')
+    expect(flash.contextWindow).toBe(1_048_576)
+    expect(flash.maxOutputTokens).toBe(65_536)
     expect(flash.cost.inputCostPer1MTokens.standard).toBe(1.5)
-    expect(flash.cost.outputCostPer1MTokens.standard).toBe(9)
+    expect(flash.cost.outputCostPer1MTokens.standard).toBe(7.5)
+    expect(flash.cost.cachedInputCostPer1MTokens).toBe(0.15)
+  })
+
+  it('prices cached prompt tokens at the cache rate', () => {
+    const flash = LLM_MODELS['gemini-3.6-flash']
+    // Cached tokens are part of promptTokenCount, so they are discounted, not added on top.
+    expect(flash.cost.cachedInputCostPer1MTokens).toBeLessThan(flash.cost.inputCostPer1MTokens.standard)
+
+    const promptTokens = 20_000
+    const cachedTokens = 15_000
+    const outputTokens = 500
+
+    const expected =
+      ((promptTokens - cachedTokens) / 1_000_000) * 1.5 +
+      (cachedTokens / 1_000_000) * 0.15 +
+      (outputTokens / 1_000_000) * 7.5
+
+    expect(calculateLLMCost('gemini-3.6-flash', promptTokens, outputTokens, cachedTokens)).toBeCloseTo(
+      expected,
+      12
+    )
+
+    const uncached = calculateLLMCost('gemini-3.6-flash', promptTokens, outputTokens)
+    expect(calculateLLMCost('gemini-3.6-flash', promptTokens, outputTokens, cachedTokens)).toBeLessThan(
+      uncached
+    )
+  })
+
+  it('clamps cached tokens to the prompt size', () => {
+    expect(calculateLLMCost('gemini-3.6-flash', 1_000, 0, 5_000)).toBe(
+      calculateLLMCost('gemini-3.6-flash', 1_000, 0, 1_000)
+    )
+    expect(calculateLLMCost('gemini-3.6-flash', 1_000, 0, -5)).toBe(
+      calculateLLMCost('gemini-3.6-flash', 1_000, 0, 0)
+    )
+  })
+
+  it('documents an implicit cache minimum for every chat model', () => {
+    for (const config of Object.values(LLM_MODELS)) {
+      expect(config.implicitCacheMinTokens).toBeGreaterThan(0)
+    }
   })
 
   it('calculates embedding cost from configured pricing', () => {
@@ -71,7 +115,7 @@ describe('Model configuration', () => {
     expect(getEmbeddingModelConfig(undefined).key).toBe(DEFAULT_EMBEDDING_MODEL_KEY)
     expect(getEmbeddingModelConfig(embeddingModel).config.model).toBe('text-embedding-3-small')
     expect(getLLMModelConfig(undefined).key).toBe(DEFAULT_CHAT_MODEL_KEY)
-    expect(getLLMModelConfig('gemini-3.5-flash').config.model).toBe('gemini-3.5-flash')
+    expect(getLLMModelConfig('gemini-3.6-flash').config.model).toBe('gemini-3.6-flash')
   })
 
   it('rejects unknown configured model keys', () => {

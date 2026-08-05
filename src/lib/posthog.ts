@@ -67,8 +67,16 @@ export async function trackLLMCall(
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    /** Prompt tokens served from Gemini's context cache, billed at the reduced cache rate. */
+    cachedInputTokens?: number;
+    cacheHitRate?: number;
+    cacheEligible?: boolean;
+    thoughtsTokens?: number;
     duration?: number;
     cost?: number;
+    /** Cost the call would have had without any cache hit. */
+    costWithoutCache?: number;
+    cacheSavingsUsd?: number;
     success?: boolean;
     errorMessage?: string;
     temperature?: number;
@@ -83,8 +91,14 @@ export async function trackLLMCall(
     input_tokens: properties?.inputTokens,
     output_tokens: properties?.outputTokens,
     total_tokens: properties?.totalTokens,
+    cached_input_tokens: properties?.cachedInputTokens,
+    cache_hit_rate: properties?.cacheHitRate,
+    cache_eligible: properties?.cacheEligible,
+    thoughts_tokens: properties?.thoughtsTokens,
     duration_ms: properties?.duration,
     cost_usd: properties?.cost,
+    cost_without_cache_usd: properties?.costWithoutCache,
+    cache_savings_usd: properties?.cacheSavingsUsd,
     success: properties?.success ?? true,
     error_message: properties?.errorMessage,
     temperature: properties?.temperature,

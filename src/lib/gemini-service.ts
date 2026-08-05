@@ -3,6 +3,7 @@ import { getOpenAIEmbedding } from "./openai-service";
 import { getContextFromKB, RetrievedContext, RetrievedSegment } from "./knowledge-base-service";
 import { getMultiStepContext, MultiStepAgentConfig, MultiStepRetrievalResult } from "./multi-step-agent-service";
 import { SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_NO_CONTEXT } from "./prompt";
+import { appendConversationTurn, getConversationTurns } from "./conversation-store";
 import { trackLLMCall, trackChatInteraction } from "./posthog";
 import { ChatTrace, ChatTraceQuery, ChatTraceSource, Message } from "@/types";
 import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
@@ -37,10 +38,7 @@ const generationConfig = {
   maxOutputTokens: LLM_CONFIG.maxOutputTokens,
 };
 
-// Chat history stores user queries and final RAG answers
-const chatHistory: { role: "user" | "model"; parts: { text: string }[] }[] = [];
-
-// Token estimation for cost tracking
+// Token estimation, only used as a fallback when the API reports no usage metadata
 const estimateTokens = (text: string): number => {
   // Very rough approximation: 1 token ≈ 4 characters for English text
   return Math.ceil(text.length / 4);
@@ -56,10 +54,83 @@ export interface AgentApproach {
   config?: MultiStepAgentConfig;
 }
 
-export interface ChatStreamCallbacks {
+/** Token accounting for one chat completion, read from Gemini's reported usage metadata. */
+export interface ChatUsage {
+  /** Full prompt size. Gemini counts cached tokens inside this number as well. */
+  promptTokens: number;
+  /** Share of the prompt served from the context cache, billed at the reduced cache rate. */
+  cachedPromptTokens: number;
+  outputTokens: number;
+  thoughtsTokens: number;
+  totalTokens: number;
+  /** cachedPromptTokens / promptTokens, 0 when nothing was cached. */
+  cacheHitRate: number;
+  /** Whether the prompt was large enough for the model to be cache eligible at all. */
+  cacheEligible: boolean;
+  cost: number;
+  /** What the same call would have cost with no cache hit, for measuring the saving. */
+  costWithoutCache: number;
+}
+
+export interface ChatOptions {
+  /**
+   * Groups the turns of one chat. The previous turns are replayed verbatim, which is what lets
+   * Gemini serve the shared prefix from its context cache on follow-up questions.
+   */
+  conversationId?: string;
+  onUsage?: (usage: ChatUsage) => void | Promise<void>;
+}
+
+export interface ChatStreamCallbacks extends ChatOptions {
   onTraceUpdate?: (trace: ChatTrace) => void | Promise<void>;
   onAnswerDelta?: (text: string) => void | Promise<void>;
 }
+
+interface GeminiUsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  cachedContentTokenCount?: number;
+  thoughtsTokenCount?: number;
+  totalTokenCount?: number;
+}
+
+const buildUsage = (
+  usageMetadata: GeminiUsageMetadata | undefined,
+  promptText: string,
+  answerText: string
+): ChatUsage => {
+  const promptTokens = usageMetadata?.promptTokenCount ?? estimateTokens(promptText);
+  const outputTokens = usageMetadata?.candidatesTokenCount ?? estimateTokens(answerText);
+  const thoughtsTokens = usageMetadata?.thoughtsTokenCount ?? 0;
+  const cachedPromptTokens = Math.min(usageMetadata?.cachedContentTokenCount ?? 0, promptTokens);
+  // Thinking tokens are billed at the output rate.
+  const billedOutputTokens = outputTokens + thoughtsTokens;
+
+  return {
+    promptTokens,
+    cachedPromptTokens,
+    outputTokens,
+    thoughtsTokens,
+    totalTokens: usageMetadata?.totalTokenCount ?? promptTokens + billedOutputTokens,
+    cacheHitRate: promptTokens > 0 ? cachedPromptTokens / promptTokens : 0,
+    cacheEligible: promptTokens >= LLM_CONFIG.implicitCacheMinTokens,
+    cost: calculateLLMCost(LLM_MODEL_KEY, promptTokens, billedOutputTokens, cachedPromptTokens),
+    costWithoutCache: calculateLLMCost(LLM_MODEL_KEY, promptTokens, billedOutputTokens, 0),
+  };
+};
+
+const usageTrackingProperties = (usage: ChatUsage) => ({
+  inputTokens: usage.promptTokens,
+  outputTokens: usage.outputTokens,
+  totalTokens: usage.totalTokens,
+  cachedInputTokens: usage.cachedPromptTokens,
+  cacheHitRate: usage.cacheHitRate,
+  cacheEligible: usage.cacheEligible,
+  thoughtsTokens: usage.thoughtsTokens,
+  cost: usage.cost,
+  costWithoutCache: usage.costWithoutCache,
+  cacheSavingsUsd: usage.costWithoutCache - usage.cost,
+});
 
 const formatContextForPrompt = (context: RetrievedContext, isMultiStep: boolean = false): string => {
   let formattedContext = `Relevant Topic: ${context.topicName}\nDescription: ${context.topicDescription}\n\n`;
@@ -185,19 +256,11 @@ const cloneTrace = (trace: ChatTrace): ChatTrace => ({
   sources: [...trace.sources],
 });
 
-const updateChatHistory = (userText: string, aiText: string) => {
-  chatHistory.push({ role: "user", parts: [{ text: userText }] });
-  chatHistory.push({ role: "model", parts: [{ text: aiText }] });
-
-  if (chatHistory.length > 10) {
-    chatHistory.splice(0, chatHistory.length - 10);
-  }
-};
-
 export const getGeminiChatResponse = async (
-  message: Message, 
+  message: Message,
   distinctId?: string,
-  agentApproach: AgentApproach = { type: 'single' }
+  agentApproach: AgentApproach = { type: 'single' },
+  options: ChatOptions = {}
 ): Promise<string> => {
   const overallStartTime = Date.now();
   let retrievedContext: RetrievedContext | null = null;
@@ -212,10 +275,11 @@ export const getGeminiChatResponse = async (
     multiStepResult = contextResult.multiStepResult;
     
     const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
-    const estimatedInputTokens = estimateTokens(fullPrompt);
-    
+    const history = getConversationTurns(options.conversationId);
+
     // Step 3: Generate response with Gemini (with retry logic)
     let text = "";
+    let usage: ChatUsage | null = null;
     let geminiDuration = 0;
     let lastGeminiError: Error | null = null;
     
@@ -224,12 +288,13 @@ export const getGeminiChatResponse = async (
         const geminiStartTime = Date.now();
         const chat = model.startChat({
           generationConfig,
-          history: [...chatHistory],
+          history,
         });
 
         const result = await chat.sendMessage(fullPrompt);
         const response = result.response;
         text = response.text();
+        usage = buildUsage(response.usageMetadata, fullPrompt, text);
         geminiDuration = Date.now() - geminiStartTime;
         break; // Success, exit retry loop
         
@@ -254,18 +319,14 @@ export const getGeminiChatResponse = async (
     }
     
     // Step 4: Calculate metrics and track usage
-    const estimatedOutputTokens = estimateTokens(text);
-    const estimatedTotalTokens = estimatedInputTokens + estimatedOutputTokens;
-    const estimatedCost = calculateLLMCost(LLM_MODEL_KEY, estimatedInputTokens, estimatedOutputTokens);
+    const resolvedUsage = usage ?? buildUsage(undefined, fullPrompt, text);
+    await options.onUsage?.(resolvedUsage);
 
     // Track Gemini API call
     if (distinctId) {
       await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion', {
-        inputTokens: estimatedInputTokens,
-        outputTokens: estimatedOutputTokens,
-        totalTokens: estimatedTotalTokens,
+        ...usageTrackingProperties(resolvedUsage),
         duration: geminiDuration,
-        cost: estimatedCost,
         success: true,
         temperature: generationConfig.temperature,
         maxTokens: generationConfig.maxOutputTokens,
@@ -273,7 +334,7 @@ export const getGeminiChatResponse = async (
       });
     }
 
-    updateChatHistory(message.text, text);
+    appendConversationTurn(options.conversationId, fullPrompt, text);
 
     aiResponse = text;
     return text;
@@ -458,12 +519,12 @@ export const getGeminiChatResponseStream = async (
     }
 
     const { fullPrompt } = buildPrompt(message, retrievedContext, agentApproach);
-    const estimatedInputTokens = estimateTokens(fullPrompt);
+    const history = getConversationTurns(callbacks.conversationId);
     const geminiStartTime = Date.now();
 
     const chat = model.startChat({
       generationConfig,
-      history: [...chatHistory],
+      history,
     });
 
     const result = await chat.sendMessageStream(fullPrompt);
@@ -479,24 +540,21 @@ export const getGeminiChatResponseStream = async (
       await callbacks.onAnswerDelta?.(delta);
     }
 
+    const aggregatedResponse = await result.response;
+
     if (!aiResponse) {
-      const response = await result.response;
-      aiResponse = response.text();
+      aiResponse = aggregatedResponse.text();
       await callbacks.onAnswerDelta?.(aiResponse);
     }
 
     const geminiDuration = Date.now() - geminiStartTime;
-    const estimatedOutputTokens = estimateTokens(aiResponse);
-    const estimatedTotalTokens = estimatedInputTokens + estimatedOutputTokens;
-    const estimatedCost = calculateLLMCost(LLM_MODEL_KEY, estimatedInputTokens, estimatedOutputTokens);
+    const usage = buildUsage(aggregatedResponse.usageMetadata, fullPrompt, aiResponse);
+    await callbacks.onUsage?.(usage);
 
     if (distinctId) {
       await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion_stream', {
-        inputTokens: estimatedInputTokens,
-        outputTokens: estimatedOutputTokens,
-        totalTokens: estimatedTotalTokens,
+        ...usageTrackingProperties(usage),
         duration: geminiDuration,
-        cost: estimatedCost,
         success: true,
         temperature: generationConfig.temperature,
         maxTokens: generationConfig.maxOutputTokens,
@@ -504,7 +562,7 @@ export const getGeminiChatResponseStream = async (
       });
     }
 
-    updateChatHistory(message.text, aiResponse);
+    appendConversationTurn(callbacks.conversationId, fullPrompt, aiResponse);
     trace.status = 'complete';
     await emitTrace();
     return aiResponse;
