@@ -3,7 +3,7 @@
 ## Research
 
 - Runtime Gemini model selection is centralized in `src/types/model-types.ts`.
-- Chat defaults to `gemini-3.6-flash`; query generation defaults to `gemini-3.1-flash-lite`.
+- Chat defaults to `gemini-3.6-flash` with `gemini-3.5-flash-lite` as the quota fallback; query generation defaults to `gemini-3.5-flash-lite`.
 - Model pricing includes the cached-input rate so context cache savings can be measured.
 - Embeddings use `text-embedding-3-small` with 1536 dimensions.
 

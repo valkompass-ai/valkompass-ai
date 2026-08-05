@@ -77,6 +77,8 @@ export async function trackLLMCall(
     /** Cost the call would have had without any cache hit. */
     costWithoutCache?: number;
     cacheSavingsUsd?: number;
+    /** True when the primary chat model was out of quota and the fallback model answered. */
+    usedFallbackModel?: boolean;
     success?: boolean;
     errorMessage?: string;
     temperature?: number;
@@ -99,6 +101,7 @@ export async function trackLLMCall(
     cost_usd: properties?.cost,
     cost_without_cache_usd: properties?.costWithoutCache,
     cache_savings_usd: properties?.cacheSavingsUsd,
+    used_fallback_model: properties?.usedFallbackModel,
     success: properties?.success ?? true,
     error_message: properties?.errorMessage,
     temperature: properties?.temperature,

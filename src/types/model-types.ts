@@ -59,22 +59,22 @@ export const EMBEDDING_MODELS = {
 } as const satisfies Record<string, EmbeddingModelConfig>;
 
 export const LLM_MODELS = {
-  'gemini-3.1-flash-lite': {
-    name: 'Google Gemini 3.1 Flash-Lite',
+  'gemini-3.5-flash-lite': {
+    name: 'Google Gemini 3.5 Flash-Lite',
     provider: 'google',
-    model: 'gemini-3.1-flash-lite',
+    model: 'gemini-3.5-flash-lite',
     contextWindow: 1_048_576,
     maxOutputTokens: 65_536,
     cost: {
       inputCostPer1MTokens: {
-        standard: 0.25,
-        longContext: 0.25,
+        standard: 0.30,
+        longContext: 0.30,
       },
       outputCostPer1MTokens: {
-        standard: 1.50,
-        longContext: 1.50,
+        standard: 2.50,
+        longContext: 2.50,
       },
-      cachedInputCostPer1MTokens: 0.025,
+      cachedInputCostPer1MTokens: 0.03,
       currency: 'USD',
       lastUpdated: '2026-08-05',
       sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
@@ -110,8 +110,13 @@ export type LLMModelKey = keyof typeof LLM_MODELS;
 
 export const DEFAULT_EMBEDDING_MODEL_KEY: EmbeddingModelKey = 'text-embedding-3-small';
 export const DEFAULT_CHAT_MODEL_KEY: LLMModelKey = 'gemini-3.6-flash';
+/**
+ * Used for chat when the primary model reports exhausted resources (429 / RESOURCE_EXHAUSTED).
+ * Flash-Lite has its own separate quota, so an answer still gets through.
+ */
+export const DEFAULT_CHAT_FALLBACK_MODEL_KEY: LLMModelKey = 'gemini-3.5-flash-lite';
 /** Query generation is short, high volume and never large enough to cache: keep it on the cheap model. */
-export const DEFAULT_QUERY_MODEL_KEY: LLMModelKey = 'gemini-3.1-flash-lite';
+export const DEFAULT_QUERY_MODEL_KEY: LLMModelKey = 'gemini-3.5-flash-lite';
 
 export function isEmbeddingModelKey(modelKey: string): modelKey is EmbeddingModelKey {
   return modelKey in EMBEDDING_MODELS;

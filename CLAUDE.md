@@ -30,7 +30,7 @@ Important runtime files:
 - `src/lib/openai-service.ts`: creates `text-embedding-3-small` embeddings with 1536 dimensions.
 - `src/lib/prompt.ts`: source-grounding, citation, Swedish-politics scope, and language rules.
 
-Current app model settings live in `src/types/model-types.ts`. As of this guide, chat defaults to `gemini-3.6-flash` and local query generation defaults to `gemini-3.1-flash-lite`. Embeddings use `text-embedding-3-small` with 1536 dimensions.
+Current app model settings live in `src/types/model-types.ts`. As of this guide, chat defaults to `gemini-3.6-flash`, falls back to `gemini-3.5-flash-lite` when the primary model is out of quota, and local query generation defaults to `gemini-3.5-flash-lite`. Embeddings use `text-embedding-3-small` with 1536 dimensions.
 
 ## Package Managers
 

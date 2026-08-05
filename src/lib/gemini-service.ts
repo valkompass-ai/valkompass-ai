@@ -6,7 +6,13 @@ import { SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION_NO_CONTEXT } from "./prompt";
 import { appendConversationTurn, getConversationTurns } from "./conversation-store";
 import { trackLLMCall, trackChatInteraction } from "./posthog";
 import { ChatTrace, ChatTraceQuery, ChatTraceSource, Message } from "@/types";
-import { DEFAULT_QUERY_MODEL_KEY, calculateLLMCost, getLLMModelConfig } from "@/types/model-types";
+import {
+  DEFAULT_CHAT_FALLBACK_MODEL_KEY,
+  DEFAULT_QUERY_MODEL_KEY,
+  LLMModelKey,
+  calculateLLMCost,
+  getLLMModelConfig,
+} from "@/types/model-types";
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
@@ -23,20 +29,47 @@ const { config: LLM_CONFIG_QUERY } = getLLMModelConfig(
 );
 const MODEL_NAME = LLM_CONFIG.model;
 
-const model = genAI.getGenerativeModel({
-  model: MODEL_NAME,
-});
+const { key: FALLBACK_MODEL_KEY, config: FALLBACK_CONFIG } = getLLMModelConfig(
+  process.env.CHAT_FALLBACK_MODEL_KEY,
+  DEFAULT_CHAT_FALLBACK_MODEL_KEY
+);
 
 const queryModel = genAI.getGenerativeModel({
   model: LLM_CONFIG_QUERY.model,
 });
 
-const generationConfig = {
+const baseGenerationConfig = {
   temperature: 0.7, // Slightly lower temperature for more factual RAG responses
   topK: 1,
   topP: 1,
-  maxOutputTokens: LLM_CONFIG.maxOutputTokens,
 };
+
+interface ChatModel {
+  key: LLMModelKey;
+  name: string;
+  model: ReturnType<typeof genAI.getGenerativeModel>;
+  generationConfig: typeof baseGenerationConfig & { maxOutputTokens: number };
+}
+
+const toChatModel = (key: LLMModelKey, config: typeof LLM_CONFIG): ChatModel => ({
+  key,
+  name: config.model,
+  model: genAI.getGenerativeModel({ model: config.model }),
+  generationConfig: { ...baseGenerationConfig, maxOutputTokens: config.maxOutputTokens },
+});
+
+const primaryChatModel = toChatModel(LLM_MODEL_KEY, LLM_CONFIG);
+const fallbackChatModel =
+  FALLBACK_MODEL_KEY === LLM_MODEL_KEY ? null : toChatModel(FALLBACK_MODEL_KEY, FALLBACK_CONFIG);
+
+/**
+ * Models are quota-limited per model, so an exhausted primary is not a transient failure that
+ * backing off will fix. Switch to the fallback instead of spending retries on a closed door.
+ */
+const isResourceExhausted = (error: Error): boolean =>
+  /429|RESOURCE_EXHAUSTED|quota/i.test(error.message);
+
+const generationConfig = primaryChatModel.generationConfig;
 
 // Token estimation, only used as a fallback when the API reports no usage metadata
 const estimateTokens = (text: string): number => {
@@ -70,6 +103,9 @@ export interface ChatUsage {
   cost: number;
   /** What the same call would have cost with no cache hit, for measuring the saving. */
   costWithoutCache: number;
+  /** Model that actually answered, which is the fallback when the primary was exhausted. */
+  modelKey: LLMModelKey;
+  usedFallbackModel: boolean;
 }
 
 export interface ChatOptions {
@@ -97,8 +133,10 @@ interface GeminiUsageMetadata {
 const buildUsage = (
   usageMetadata: GeminiUsageMetadata | undefined,
   promptText: string,
-  answerText: string
+  answerText: string,
+  chatModel: ChatModel = primaryChatModel
 ): ChatUsage => {
+  const { config } = getLLMModelConfig(chatModel.key);
   const promptTokens = usageMetadata?.promptTokenCount ?? estimateTokens(promptText);
   const outputTokens = usageMetadata?.candidatesTokenCount ?? estimateTokens(answerText);
   const thoughtsTokens = usageMetadata?.thoughtsTokenCount ?? 0;
@@ -113,9 +151,11 @@ const buildUsage = (
     thoughtsTokens,
     totalTokens: usageMetadata?.totalTokenCount ?? promptTokens + billedOutputTokens,
     cacheHitRate: promptTokens > 0 ? cachedPromptTokens / promptTokens : 0,
-    cacheEligible: promptTokens >= LLM_CONFIG.implicitCacheMinTokens,
-    cost: calculateLLMCost(LLM_MODEL_KEY, promptTokens, billedOutputTokens, cachedPromptTokens),
-    costWithoutCache: calculateLLMCost(LLM_MODEL_KEY, promptTokens, billedOutputTokens, 0),
+    cacheEligible: promptTokens >= config.implicitCacheMinTokens,
+    cost: calculateLLMCost(chatModel.key, promptTokens, billedOutputTokens, cachedPromptTokens),
+    costWithoutCache: calculateLLMCost(chatModel.key, promptTokens, billedOutputTokens, 0),
+    modelKey: chatModel.key,
+    usedFallbackModel: chatModel.key !== primaryChatModel.key,
   };
 };
 
@@ -130,6 +170,7 @@ const usageTrackingProperties = (usage: ChatUsage) => ({
   cost: usage.cost,
   costWithoutCache: usage.costWithoutCache,
   cacheSavingsUsd: usage.costWithoutCache - usage.cost,
+  usedFallbackModel: usage.usedFallbackModel,
 });
 
 const formatContextForPrompt = (context: RetrievedContext, isMultiStep: boolean = false): string => {
@@ -282,54 +323,61 @@ export const getGeminiChatResponse = async (
     let usage: ChatUsage | null = null;
     let geminiDuration = 0;
     let lastGeminiError: Error | null = null;
-    
+    let chatModel = primaryChatModel;
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const geminiStartTime = Date.now();
-        const chat = model.startChat({
-          generationConfig,
+        const chat = chatModel.model.startChat({
+          generationConfig: chatModel.generationConfig,
           history,
         });
 
         const result = await chat.sendMessage(fullPrompt);
         const response = result.response;
         text = response.text();
-        usage = buildUsage(response.usageMetadata, fullPrompt, text);
+        usage = buildUsage(response.usageMetadata, fullPrompt, text, chatModel);
         geminiDuration = Date.now() - geminiStartTime;
         break; // Success, exit retry loop
-        
+
       } catch (geminiError) {
         lastGeminiError = geminiError instanceof Error ? geminiError : new Error('Unknown Gemini error');
-        
+
+        // Out of quota on this model: another attempt against it cannot succeed, so switch models.
+        if (isResourceExhausted(lastGeminiError) && fallbackChatModel && chatModel === primaryChatModel) {
+          chatModel = fallbackChatModel;
+          continue;
+        }
+
         // Check if this is a retryable error
-        const isRetryable = lastGeminiError.message.includes('overloaded') || 
+        const isRetryable = lastGeminiError.message.includes('overloaded') ||
                            lastGeminiError.message.includes('503') ||
                            lastGeminiError.message.includes('429') ||
                            lastGeminiError.message.includes('timeout');
-        
+
         if (isRetryable && attempt < MAX_RETRIES) {
           const delayMs = RETRY_DELAY_MS * Math.pow(2, attempt);
           await delay(delayMs);
           continue;
         }
-        
+
         // If not retryable or max retries reached, throw the error
         throw lastGeminiError;
       }
     }
-    
+
     // Step 4: Calculate metrics and track usage
-    const resolvedUsage = usage ?? buildUsage(undefined, fullPrompt, text);
+    const resolvedUsage = usage ?? buildUsage(undefined, fullPrompt, text, chatModel);
     await options.onUsage?.(resolvedUsage);
 
     // Track Gemini API call
     if (distinctId) {
-      await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion', {
+      await trackLLMCall(distinctId, LLM_CONFIG.provider, chatModel.name, 'chat_completion', {
         ...usageTrackingProperties(resolvedUsage),
         duration: geminiDuration,
         success: true,
-        temperature: generationConfig.temperature,
-        maxTokens: generationConfig.maxOutputTokens,
+        temperature: chatModel.generationConfig.temperature,
+        maxTokens: chatModel.generationConfig.maxOutputTokens,
         messageId: message.id,
       });
     }
@@ -522,12 +570,27 @@ export const getGeminiChatResponseStream = async (
     const history = getConversationTurns(callbacks.conversationId);
     const geminiStartTime = Date.now();
 
-    const chat = model.startChat({
-      generationConfig,
-      history,
-    });
+    // The stream rejects before it emits anything when the model is out of quota, so falling back
+    // here is safe: nothing has been sent to the client yet.
+    let chatModel = primaryChatModel;
+    let result;
+    try {
+      result = await chatModel.model
+        .startChat({ generationConfig: chatModel.generationConfig, history })
+        .sendMessageStream(fullPrompt);
+    } catch (streamError) {
+      const error = streamError instanceof Error ? streamError : new Error('Unknown Gemini error');
+      if (!isResourceExhausted(error) || !fallbackChatModel) {
+        throw error;
+      }
 
-    const result = await chat.sendMessageStream(fullPrompt);
+      chatModel = fallbackChatModel;
+      await addTraceEvent(`Byter till reservmodellen ${chatModel.name}`);
+      result = await chatModel.model
+        .startChat({ generationConfig: chatModel.generationConfig, history })
+        .sendMessageStream(fullPrompt);
+    }
+
     await addTraceEvent("Skriver svaret");
 
     for await (const chunk of result.stream) {
@@ -548,16 +611,16 @@ export const getGeminiChatResponseStream = async (
     }
 
     const geminiDuration = Date.now() - geminiStartTime;
-    const usage = buildUsage(aggregatedResponse.usageMetadata, fullPrompt, aiResponse);
+    const usage = buildUsage(aggregatedResponse.usageMetadata, fullPrompt, aiResponse, chatModel);
     await callbacks.onUsage?.(usage);
 
     if (distinctId) {
-      await trackLLMCall(distinctId, LLM_CONFIG.provider, MODEL_NAME, 'chat_completion_stream', {
+      await trackLLMCall(distinctId, LLM_CONFIG.provider, chatModel.name, 'chat_completion_stream', {
         ...usageTrackingProperties(usage),
         duration: geminiDuration,
         success: true,
-        temperature: generationConfig.temperature,
-        maxTokens: generationConfig.maxOutputTokens,
+        temperature: chatModel.generationConfig.temperature,
+        maxTokens: chatModel.generationConfig.maxOutputTokens,
         messageId: message.id,
       });
     }

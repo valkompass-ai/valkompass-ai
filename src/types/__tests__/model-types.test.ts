@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  DEFAULT_CHAT_FALLBACK_MODEL_KEY,
   DEFAULT_CHAT_MODEL_KEY,
   DEFAULT_EMBEDDING_MODEL_KEY,
   DEFAULT_QUERY_MODEL_KEY,
@@ -15,12 +16,13 @@ import {
 
 describe('Model configuration', () => {
   const embeddingModel: EmbeddingModelKey = 'text-embedding-3-small'
-  const llmModel: LLMModelKey = 'gemini-3.1-flash-lite'
+  const llmModel: LLMModelKey = 'gemini-3.5-flash-lite'
 
   it('uses current default model keys', () => {
     expect(DEFAULT_EMBEDDING_MODEL_KEY).toBe('text-embedding-3-small')
     expect(DEFAULT_CHAT_MODEL_KEY).toBe('gemini-3.6-flash')
-    expect(DEFAULT_QUERY_MODEL_KEY).toBe('gemini-3.1-flash-lite')
+    expect(DEFAULT_QUERY_MODEL_KEY).toBe('gemini-3.5-flash-lite')
+    expect(DEFAULT_CHAT_FALLBACK_MODEL_KEY).toBe('gemini-3.5-flash-lite')
   })
 
   it('has only current embedding model configuration', () => {
@@ -37,15 +39,15 @@ describe('Model configuration', () => {
   })
 
   it('has only current Gemini model configurations', () => {
-    expect(Object.keys(LLM_MODELS)).toEqual(['gemini-3.1-flash-lite', 'gemini-3.6-flash'])
+    expect(Object.keys(LLM_MODELS)).toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash'])
 
-    const flashLite = LLM_MODELS['gemini-3.1-flash-lite']
-    expect(flashLite.model).toBe('gemini-3.1-flash-lite')
+    const flashLite = LLM_MODELS['gemini-3.5-flash-lite']
+    expect(flashLite.model).toBe('gemini-3.5-flash-lite')
     expect(flashLite.contextWindow).toBe(1_048_576)
     expect(flashLite.maxOutputTokens).toBe(65_536)
-    expect(flashLite.cost.inputCostPer1MTokens.standard).toBe(0.25)
-    expect(flashLite.cost.outputCostPer1MTokens.standard).toBe(1.5)
-    expect(flashLite.cost.cachedInputCostPer1MTokens).toBe(0.025)
+    expect(flashLite.cost.inputCostPer1MTokens.standard).toBe(0.3)
+    expect(flashLite.cost.outputCostPer1MTokens.standard).toBe(2.5)
+    expect(flashLite.cost.cachedInputCostPer1MTokens).toBe(0.03)
 
     const flash = LLM_MODELS['gemini-3.6-flash']
     expect(flash.model).toBe('gemini-3.6-flash')
@@ -106,7 +108,7 @@ describe('Model configuration', () => {
   it('calculates LLM cost from configured pricing', () => {
     const inputTokens = 1000
     const outputTokens = 500
-    const expectedCost = (inputTokens / 1_000_000) * 0.25 + (outputTokens / 1_000_000) * 1.5
+    const expectedCost = (inputTokens / 1_000_000) * 0.3 + (outputTokens / 1_000_000) * 2.5
 
     expect(calculateLLMCost(llmModel, inputTokens, outputTokens)).toBe(expectedCost)
   })
